@@ -5,9 +5,9 @@ import { hydrateIcons, icon } from "./icons.js";
 import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
 import { collectTabs, sleepTabs, untouchable } from "../core/collect.js";
 import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS } from "../core/url.js";
-import { hasShots } from "../core/shots.js";
+import { shotStamps } from "../core/shots.js";
 import { cleanOrphans } from "../core/store.js";
-import { bindPeek, shotUrl, forgetShots } from "./peek.js";
+import { bindPeek, shotUrl, forgetShots, forgetShotKeys } from "./peek.js";
 import { runEnrich, onEnrichState, retryFailed } from "./enricher.js";
 import { openSend } from "./send.js";
 import { openSettings, applyTheme, applyScale, scaleOf } from "./settings.js";
@@ -45,14 +45,22 @@ function applyLayout() {
   document.querySelectorAll("[data-layout]").forEach((b) => b.setAttribute("aria-checked", String(st.layout[b.dataset.for] === b.dataset.layout)));
 }
 
+/** Обновить, у каких ссылок есть снимок. Возвращает true, если что-то поменялось (новый, переснятый, удалённый). */
 async function refreshShots() {
-  const keys = new Set(st.items.map((it) => it.nkey));
-  for (const t of st.tabs) keys.add(normalizeUrl(t.url));
+  let stamps;
   try {
-    st.shotKeys = new Set(await hasShots([...keys]));
+    stamps = await shotStamps();
   } catch (e) {
-    st.shotKeys = new Set();
+    stamps = new Map();
   }
+  const prev = st.shotStamps || new Map();
+  const changed = [];
+  for (const [k, ts] of stamps) if (prev.get(k) !== ts) changed.push(k);
+  for (const k of prev.keys()) if (!stamps.has(k)) changed.push(k);
+  st.shotStamps = stamps;
+  st.shotKeys = new Set(stamps.keys());
+  if (prev.size && changed.length) forgetShotKeys(changed); // переснятые — показать заново
+  return changed.length > 0;
 }
 
 /** Подставить снимки страниц в миниатюры (после отрисовки). */
@@ -78,9 +86,21 @@ function fillShots(root) {
 /** Перерисовать, сохранив фокус: после щелчка по флажку с клавиатуры фокус не уходит в начало. */
 function keepFocus(root, paint) {
   const a = document.activeElement;
-  const host = a && root.contains(a) ? a.closest("[data-tab], [data-id], [data-site]") : null;
-  const key = host && (host.dataset.tab ? `[data-tab="${host.dataset.tab}"]` : host.dataset.id ? `[data-id="${CSS.escape(host.dataset.id)}"]` : `[data-site="${CSS.escape(host.dataset.site)}"]`);
-  const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
+  const host = a && root.contains(a) ? a.closest("[data-tab], [data-id], [data-site], [data-f], .nav-pick") : null;
+  const key =
+    host &&
+    (host.dataset.tab
+      ? `[data-tab="${host.dataset.tab}"]`
+      : host.dataset.id
+        ? `[data-id="${CSS.escape(host.dataset.id)}"]`
+        : host.dataset.site
+          ? `[data-site="${CSS.escape(host.dataset.site)}"]`
+          : host.dataset.f
+            ? `[data-f="${CSS.escape(host.dataset.f)}"]`
+            : host.classList.contains("nav-folders-btn")
+              ? ".nav-folders-btn"
+              : ".nav-sites-btn");
+  const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
   paint();
   if (!key) return;
   const again = root.querySelector(key);
@@ -369,7 +389,7 @@ function bindOpen() {
     renderOpen();
     let res;
     try {
-      res = await collectTabs(tabs, { onProgress: (d, n) => progress(d / n) });
+      res = await navigator.locks.request("tc-collect", () => collectTabs(tabs, { onProgress: (d, n) => progress(d / n) }));
     } catch (e) {
       toast("Не получилось собрать вкладки — они остались открытыми.");
       return;
@@ -382,10 +402,11 @@ function bindOpen() {
     await reloadItems();
     await reloadTabs();
     render();
-    const extra = res.merged ? ` (${res.merged} уже были в списке)` : "";
-    toast(`Собрано: ${nTabs(tabs.length)}${extra}`, async () => {
-      // «Вернуть»: открыть вкладки обратно (усыплёнными) и убрать только что добавленные записи
-      await chrome.runtime.sendMessage({ type: "open", items: tabs.map((t) => ({ url: t.url })), lazy: true, windowId: st.myWindowId });
+    const extra = [res.merged ? `${res.merged} уже были в списке` : "", res.kept ? `${res.kept} с недописанным текстом оставлены открытыми` : ""].filter(Boolean).join(", ");
+    const closed = res.items; // вкладки с черновиками не закрывались — их и не открываем
+    toast(`Собрано: ${nTabs(tabs.length)}${extra ? ` (${extra})` : ""}`, async () => {
+      // «Вернуть»: открыть закрытые вкладки обратно (усыплёнными, на месте прокрутки) и убрать добавленные записи
+      await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId });
       await removeItems(res.ids);
       await reloadItems();
       await reloadTabs();
@@ -402,9 +423,15 @@ function bindOpen() {
     let res;
     try {
       res = await sleepTabs(tabs, (d, n) => progress(d / n));
+    } catch (e) {
+      res = null;
     } finally {
       st.collecting = false;
       progress(null);
+    }
+    if (!res) {
+      renderOpen();
+      return toast("Не получилось усыпить вкладки");
     }
     st.openSel.clear();
     await reloadTabs();
@@ -412,6 +439,7 @@ function bindOpen() {
     const why = [
       res.drafts ? `${res.drafts} — с недописанным текстом` : "",
       res.audible ? `${res.audible} — со звуком` : "",
+      res.unknown ? `${res.unknown} — не успели проверить` : "",
     ].filter(Boolean);
     toast(`Усыплено: ${nTabs(res.n)}${why.length ? `. Не тронуты: ${why.join(", ")}` : ""}`);
   });
@@ -449,7 +477,7 @@ function renderSide() {
   h += navItem({ type: "sent" }, "В Telegram", sent, `<span class="nav-emoji">${icon("send", 18)}</span>`, false, "nav-main");
   // узко: папки — одной кнопкой с меню (как сайты)
   const curFolder = st.filter.type === "folder" ? st.folders.find((f) => f.id === st.filter.id) : null;
-  h += `<button type="button" class="nav-item nav-pick nav-folders-btn${curFolder ? " on" : ""}" aria-haspopup="menu" aria-current="${!!curFolder}" title="${curFolder ? esc(curFolder.name) : "Папки"}" aria-label="Папки">
+  h += `<button type="button" class="nav-item nav-pick nav-folders-btn${curFolder ? " on" : ""}" aria-haspopup="menu" aria-current="${!!curFolder}" title="${curFolder ? esc(curFolder.name) : "Папки"}" aria-label="${curFolder ? esc(`Папка: ${curFolder.name}`) : "Папки"}" aria-expanded="false">
     <span class="nav-emoji">${icon("folder", 18)}</span><span class="n-label">${curFolder ? esc(curFolder.name) : "Папки"}</span><span class="n-count">${icon("chevron", 14)}</span></button>`;
 
   h += `<div class="side-h"><span>Папки</span><button type="button" class="icon-btn" id="folder-new" title="Новая папка" aria-label="Новая папка">${icon("plus", 18)}</button></div>`;
@@ -473,7 +501,7 @@ function renderSide() {
   // на узком экране сайты — не длинной лентой, а одной кнопкой с меню
   if (sites.size) {
     const curSite = st.filter.type === "site" ? st.siteList.find((x) => x.site === st.filter.site) : null;
-    h += `<button type="button" class="nav-item nav-pick nav-sites-btn${curSite ? " on" : ""}" aria-haspopup="menu" aria-current="${!!curSite}" title="${curSite ? esc(curSite.label) : "Сайты"}" aria-label="Сайты">
+    h += `<button type="button" class="nav-item nav-pick nav-sites-btn${curSite ? " on" : ""}" aria-haspopup="menu" aria-current="${!!curSite}" title="${curSite ? esc(curSite.label) : "Сайты"}" aria-label="${curSite ? esc(`Сайт: ${curSite.label}`) : "Сайты"}" aria-expanded="false">
       <span class="nav-emoji">${icon("globe", 18)}</span><span class="n-label">${curSite ? esc(curSite.label) : "Сайты"}</span><span class="n-count">${icon("chevron", 14)}</span></button>`;
     h += `<div class="side-h"><span>Сайты</span></div>`;
   }
@@ -487,7 +515,10 @@ function renderSide() {
       }
     }
   }
-  $("side-nav").innerHTML = h;
+  if (h !== st.sideHtml) {
+    st.sideHtml = h;
+    keepFocus($("side-nav"), () => ($("side-nav").innerHTML = h));
+  }
 }
 
 function card(it) {
@@ -597,13 +628,23 @@ async function deleteItems(ids) {
   });
 }
 
-function closeMenu() {
-  $("folder-menu").hidden = true;
+function closeMenu(refocus = false) {
+  const menu = $("folder-menu");
+  if (menu.hidden) return;
+  menu.hidden = true;
+  if (menuOpener) {
+    menuOpener.setAttribute("aria-expanded", "false");
+    if (refocus && menuOpener.isConnected) menuOpener.focus();
+  }
 }
 
+let menuOpener = null;
 function placeMenu(anchor) {
   const menu = $("folder-menu");
   menu.hidden = false;
+  menuOpener = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  menu.querySelectorAll("button").forEach((b) => b.setAttribute("role", "menuitem"));
   const r = anchor.getBoundingClientRect();
   const w = menu.offsetWidth;
   menu.style.left = `${Math.max(16, Math.min(r.left, innerWidth - w - 16))}px`;
@@ -703,6 +744,7 @@ function bindLib() {
     if (!c) return;
     const id = c.dataset.id;
     const it = st.items.find((x) => x.id === id);
+    if (!it) return; // карточку уже убрали (из другой страницы)
     if (e.target.closest("[data-open]")) {
       if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // как обычная ссылка
       e.preventDefault();
@@ -731,9 +773,24 @@ function bindLib() {
   });
   $("open-btn").addEventListener("click", () => openItems(selectedItems()));
   $("delete-btn").addEventListener("click", () => deleteItems([...st.libSel]));
+  $("folder-btn").setAttribute("aria-expanded", "false");
   $("folder-btn").addEventListener("click", (e) => {
     e.stopPropagation();
-    $("folder-menu").hidden ? showFolderMenu(e.currentTarget) : closeMenu();
+    const menu = $("folder-menu");
+    menu.hidden || menu.dataset.kind !== "folders" ? showFolderMenu(e.currentTarget) : closeMenu();
+  });
+  // меню с клавиатуры: стрелки вверх/вниз, Esc — закрыть и вернуться к кнопке
+  $("folder-menu").addEventListener("keydown", (e) => {
+    const btns = [...$("folder-menu").querySelectorAll("button")];
+    const i = btns.indexOf(document.activeElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      btns[(i + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length].focus();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu(true);
+    }
   });
   $("folder-menu").addEventListener("click", async (e) => {
     const fp = e.target.closest("[data-folder-pick]");
@@ -826,9 +883,7 @@ function onTabsChanged() {
   // фон снимает страницу ~через секунду после перехода — тогда и обновим миниатюры (и в панели)
   clearTimeout(shotsTimer);
   shotsTimer = setTimeout(async () => {
-    const before = st.shotKeys.size;
-    await refreshShots();
-    if (st.shotKeys.size !== before) {
+    if (await refreshShots()) {
       st.openHtml = st.libHtml = "";
       renderOpen();
       renderLib();
@@ -895,6 +950,7 @@ async function init() {
     st.q = q.value.trim();
     st.shown = PAGE;
     st.libSel.clear();
+    st.openSel.clear(); // «Собрать» — только то, что видно
     renderOpen();
     renderLib();
   });
@@ -985,22 +1041,16 @@ async function init() {
   // вернулись на страницу сборщика — могли появиться новые снимки
   document.addEventListener("visibilitychange", async () => {
     if (document.hidden) return;
-    forgetShots();
-    await refreshShots();
-    renderLib();
+    if (await refreshShots()) {
+      st.openHtml = st.libHtml = "";
+      renderOpen();
+      renderLib();
+    }
+    // вернулись на страницу — продолжить уточнение описаний, если его бросили в фоне
+    if (st.items.some((it) => it.enrich === "pending")) runEnrich();
   });
   window.addEventListener("resize", placeholder);
-  // лента разделов на узком экране листается колесом мыши
-  document.querySelector(".side").addEventListener(
-    "wheel",
-    (e) => {
-      const el = e.currentTarget;
-      if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-      e.preventDefault();
-      el.scrollLeft += e.deltaY;
-    },
-    { passive: false }
-  );
+
   for (const ev of ["onCreated", "onRemoved", "onMoved", "onAttached", "onDetached", "onReplaced", "onActivated"]) chrome.tabs[ev].addListener(onTabsChanged);
   chrome.tabs.onUpdated.addListener(onTabUpdated);
   onEnrichState((left) => {
@@ -1011,6 +1061,9 @@ async function init() {
   });
   render();
   runEnrich();
+  setInterval(() => {
+    if (!document.hidden && st.items.some((it) => it.enrich === "pending")) runEnrich();
+  }, 30000);
 }
 
 init();

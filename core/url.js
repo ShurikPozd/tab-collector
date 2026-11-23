@@ -45,7 +45,7 @@ const GH_RESERVED = new Set([
 ]);
 // метки отслеживания — не часть адреса (дубли с ними склеиваются)
 // si/feature/pp — метки только YouTube (там ссылка склеивается по id видео), на других сайтах не трогаем
-const TRACKING = /^(utm_[a-z]+|fbclid|gclid|yclid|ysclid|_openstat|ref_src|igshid|mc_[a-z]+)$/i;
+const TRACKING = /^(utm_[a-z_]+|fbclid|gclid|yclid|ysclid|_openstat|ref_src|igshid|mc_[a-z_]+)$/i;
 
 /** Хост без www. и m. — им группируются вкладки. */
 export function siteOf(url) {
@@ -121,7 +121,8 @@ export function recognize(url) {
   let m;
 
   if (SHIKI_HOSTS.has(host)) {
-    m = path.match(/^\/(animes|mangas|ranobe|characters|people)\/[a-z]*(\d+)/);
+    // только сама страница тайтла: /animes/52991-frieren; /reviews, /video и т.п. — отдельные страницы
+    m = path.match(/^\/(animes|mangas|ranobe|characters|people)\/[a-z]*(\d+)[^/]*\/?$/);
     if (m) {
       const kind = SHIKI_KIND[m[1]];
       return {
@@ -136,7 +137,7 @@ export function recognize(url) {
   }
 
   if (host === "myanimelist.net") {
-    m = path.match(/^\/(anime|manga|character|people)\/(\d+)/);
+    m = path.match(/^\/(anime|manga|character|people)\/(\d+)(\/[^/]*)?\/?$/);
     if (m) {
       const kind = { anime: "anime", manga: "manga", character: "character", people: "person" }[m[1]];
       return { ...base, ...kindInfo(kind), provider: "mal", ref: { section: m[1], id: m[2] }, key: `mal:${m[1]}:${m[2]}` };
@@ -144,7 +145,7 @@ export function recognize(url) {
   }
 
   if (host === "anilist.co") {
-    m = path.match(/^\/(anime|manga|character|staff)\/(\d+)/);
+    m = path.match(/^\/(anime|manga|character|staff)\/(\d+)(\/[^/]*)?\/?$/);
     if (m) {
       const kind = { anime: "anime", manga: "manga", character: "character", staff: "person" }[m[1]];
       return {
@@ -173,7 +174,8 @@ export function recognize(url) {
       const list = u.searchParams.get("list");
       return { ...base, site: "youtube.com", ...kindInfo("playlist"), provider: "page", key: `youtube:list:${list}` };
     }
-    if ((m = path.match(/^\/(@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)/))) {
+    // только главная канала: /@name/videos и /@name/community — разные страницы
+    if ((m = path.match(/^\/(@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)\/?$/))) {
       // @имя — без учёта регистра, /channel/UC… — с учётом
       const ch = m[1].startsWith("@") ? m[1].toLowerCase() : m[1];
       return { ...base, site: "youtube.com", ...kindInfo("channel"), provider: "page", key: `youtube:${ch}` };
@@ -183,9 +185,11 @@ export function recognize(url) {
 
   if (host === "github.com") {
     const parts = path.split("/").filter(Boolean);
-    if (parts.length >= 1 && !GH_RESERVED.has(parts[0].toLowerCase())) {
+    // ?tab=stars, ?tab=repositories и т.п. — разные страницы профиля
+    const plain = ![...u.searchParams.keys()].some((k) => !TRACKING.test(k));
+    if (parts.length >= 1 && parts.length <= 4 && plain && !GH_RESERVED.has(parts[0].toLowerCase())) {
       const [owner, repo, section, num] = parts;
-      if (repo && (section === "issues" || section === "pull") && /^\d+$/.test(num || "")) {
+      if (repo && (section === "issues" || section === "pull") && /^\d+$/.test(num || "") && parts.length === 4) {
         const kind = section === "pull" ? "pr" : "issue";
         return {
           ...base,
@@ -211,7 +215,8 @@ export function recognize(url) {
     return { ...base, provider: "page" };
   }
 
-  if ((m = host.match(/^([a-z-]+)\.wikipedia\.org$/)) && path.startsWith("/wiki/")) {
+  // правка, история, старая версия статьи (?action=edit, ?oldid=…) — не сама статья
+  if ((m = host.match(/^([a-z-]+)\.wikipedia\.org$/)) && path.startsWith("/wiki/") && ![...u.searchParams.keys()].some((k) => !TRACKING.test(k))) {
     let title = path.slice(6);
     try {
       title = decodeURIComponent(title);
@@ -231,7 +236,7 @@ export function recognize(url) {
   }
 
   if (host === "habr.com") {
-    m = path.match(/\/(articles|post|news|companies\/[^/]+\/articles|companies\/[^/]+\/news)\/(\d+)/);
+    m = path.match(/\/(articles|post|news|companies\/[^/]+\/articles|companies\/[^/]+\/news)\/(\d+)\/?$/);
     if (m) {
       const kind = /news/.test(m[1]) ? "news" : "article";
       return { ...base, ...kindInfo(kind), provider: "habr", key: `habr:${m[2]}` };

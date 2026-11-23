@@ -213,6 +213,8 @@ async function pageMeta(url) {
     // без ваших куки: страницу запрашиваем как гость
     const r = await fetch(url, { credentials: "omit", signal: ctl.signal, headers: { Accept: "text/html" } });
     if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
+    // гостя перекинуло на другой сайт (вход в Google, Notion, Jira) — это не та страница
+    if (r.redirected && new URL(r.url).hostname.replace(/^www\./, "") !== new URL(url).hostname.replace(/^www\./, "")) return { doc: null, meta: {} };
     const type = r.headers.get("content-type") || "";
     if (!/html/.test(type)) return { doc: null, meta: {} };
     const text = (await r.text()).slice(0, 600000);
@@ -302,8 +304,10 @@ export async function fetchDetails(item) {
   }
   await polite(`page:${host}`, p === "habr" ? GAP.habr : GAP.page);
   const { doc, meta } = await pageMeta(item.url);
+  // название, которое вы видели во вкладке, не заменяем тем, что страница отдала гостю
+  const hasTitle = item.title && item.title !== item.url;
   const out = {
-    title: meta.title || item.title,
+    title: hasTitle ? "" : meta.title,
     description: clip(meta.description, 600),
     image: meta.image && /^https?:/.test(meta.image) ? meta.image : meta.image ? new URL(meta.image, item.url).href : "",
     siteName: meta.siteName,

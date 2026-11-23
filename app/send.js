@@ -114,7 +114,7 @@ async function go() {
     return status("Сначала впишите секрет бота в настройках (значок справа вверху).", "err");
   }
   status(m === "each" ? "Отправляю… бот сохраняет ссылки по одной, это может занять пару минут." : "Отправляю список…");
-  const res = await sendLinks(items, m, {
+  const res = await navigator.locks.request("tc-send", () => sendLinks(items, m, {
     title: $("list-title").value.trim(),
     desc: descChoice(m),
     signal: ctl.signal,
@@ -132,7 +132,7 @@ async function go() {
       items = items.filter((it) => !cat.has(it.id)); // «Отправить» ещё раз — только оставшиеся
       onDone();
     },
-  });
+  }));
   ctl = null;
   busy(false);
   $("send-count").innerHTML = items.length ? `Осталось отправить: <b>${esc(linksWord(items.length))}</b>` : "Все выбранные ссылки отправлены";

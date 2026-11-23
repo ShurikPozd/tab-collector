@@ -44,18 +44,24 @@ async function enrichLoop() {
   if (running) return;
   running = true;
   const patches = new Map();
+  const seen = new Set(); // уже запрошенные за этот запуск — второй раз не спрашиваем
   let timer = null;
+  let writing = Promise.resolve();
   try {
     for (;;) {
+      // вкладка сборщика ушла в фон — отпускаем работу видимой странице (панели), в фоне таймеры медленные
+      if (document.hidden) break;
+      await writing;
       const { items } = await load();
-      const todo = items.filter((it) => it.enrich === "pending" && !patches.has(it.id));
+      const todo = items.filter((it) => it.enrich === "pending" && !patches.has(it.id) && !seen.has(it.id));
       if (!todo.length) break;
       left = todo.length;
       onState(left);
       let i = 0;
       const worker = async () => {
-        while (i < todo.length) {
+        while (i < todo.length && !document.hidden) {
           const it = todo[i++];
+          seen.add(it.id);
           let p;
           try {
             p = { ...(await fetchDetails(it)), enrich: "done" };
@@ -65,13 +71,14 @@ async function enrichLoop() {
           patches.set(it.id, p);
           left = Math.max(0, left - 1);
           onState(left);
-          if (!timer) timer = setTimeout(() => ((timer = null), flush(patches)), 3000);
+          if (!timer) timer = setTimeout(() => ((timer = null), (writing = flush(patches))), 3000);
         }
       };
       // разные сайты идут параллельно, один и тот же — с паузами (см. polite в enrich.js)
       await Promise.all([worker(), worker(), worker(), worker()]);
       clearTimeout(timer);
       timer = null;
+      await writing;
       await flush(patches);
     }
   } finally {

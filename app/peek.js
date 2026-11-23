@@ -18,6 +18,15 @@ export function shotUrl(key) {
 }
 
 /** Снимок обновился (или удалён) — забыть закэшированный адрес. */
+/** Забыть адреса только этих снимков (пересняли или удалили). */
+export function forgetShotKeys(keys) {
+  for (const k of keys) {
+    const p = urls.get(k);
+    if (p) p.then((u) => u && URL.revokeObjectURL(u));
+    urls.delete(k);
+  }
+}
+
 export function forgetShots() {
   for (const p of urls.values()) p.then((u) => u && URL.revokeObjectURL(u));
   urls.clear();

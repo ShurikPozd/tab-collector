@@ -51,7 +51,9 @@ t("YouTube", () => {
   assert.equal(recognize("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10").ref.id, "dQw4w9WgXcQ");
   assert.equal(recognize("https://youtu.be/dQw4w9WgXcQ").key, "youtube:dQw4w9WgXcQ");
   assert.equal(recognize("https://www.youtube.com/shorts/dQw4w9WgXcQ").kind, "short");
-  assert.equal(recognize("https://www.youtube.com/@veritasium/videos").kind, "channel");
+  assert.equal(recognize("https://www.youtube.com/@veritasium").kind, "channel");
+  // вкладки канала — отдельные страницы (сбор не закроет одну как дубль другой)
+  assert.notEqual(normalizeUrl("https://www.youtube.com/@veritasium/videos"), normalizeUrl("https://www.youtube.com/@veritasium/community"));
   assert.equal(recognize("https://www.youtube.com/playlist?list=PL123").kind, "playlist");
   assert.equal(normalizeUrl("https://m.youtube.com/watch?v=dQw4w9WgXcQ"), normalizeUrl("https://youtu.be/dQw4w9WgXcQ"));
 });
@@ -133,6 +135,19 @@ t("разные поиски не склеиваются (сбор закрыл 
   assert.equal(k("https://example.com/post#comments"), k("https://example.com/post"));
   // si/feature — метки YouTube, на других сайтах это обычные параметры
   assert.notEqual(k("https://shop.ru/item?si=1"), k("https://shop.ru/item?si=2"));
+});
+t("подстраницы — не дубли главной (правка в Википедии, файлы PR, рецензии)", () => {
+  const k = (u) => normalizeUrl(u);
+  assert.notEqual(k("https://ru.wikipedia.org/wiki/X?action=edit"), k("https://ru.wikipedia.org/wiki/X"));
+  assert.notEqual(k("https://github.com/torvalds?tab=repositories"), k("https://github.com/torvalds?tab=stars"));
+  assert.notEqual(k("https://github.com/o/r/pull/5/files"), k("https://github.com/o/r/pull/5"));
+  assert.notEqual(k("https://shikimori.one/animes/1-a/reviews"), k("https://shikimori.one/animes/1-a"));
+  assert.notEqual(k("https://habr.com/ru/articles/5/comments/"), k("https://habr.com/ru/articles/5/"));
+  // а главная — по-прежнему одна
+  assert.equal(k("https://shikimori.one/animes/52991-frieren"), k("https://shikimori.io/animes/52991"));
+  assert.equal(k("https://myanimelist.net/anime/52991/Sousou_no_Frieren"), k("https://myanimelist.net/anime/52991"));
+  assert.equal(recognize("https://github.com/o/r/pull/5").kind, "pr");
+  assert.equal(k("https://x.ru/a?utm_source_platform=tg"), k("https://x.ru/a"));
 });
 t("поиск Google и Яндекса", () => {
   const r = recognize("https://www.google.com/search?q=%D1%84%D1%80%D0%B8%D1%80%D0%B5%D0%BD+%D0%B0%D0%BD%D0%B8%D0%BC%D0%B5&sca_esv=1");

@@ -44,6 +44,23 @@ export async function hasShots(keys) {
   return keys.filter((k) => set.has(k));
 }
 
+/** ключ → время снимка (без чтения самих картинок): видно и новые снимки, и пересъёмку. */
+export async function shotStamps() {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const out = new Map();
+    const t = d.transaction(STORE, "readonly");
+    t.objectStore(STORE).index("ts").openKeyCursor().onsuccess = (ev) => {
+      const cur = ev.target.result;
+      if (!cur) return;
+      out.set(cur.primaryKey, cur.key);
+      cur.continue();
+    };
+    t.oncomplete = () => res(out);
+    t.onerror = () => rej(t.error);
+  });
+}
+
 export function clearShots() {
   return tx("readwrite", (s) => s.clear());
 }

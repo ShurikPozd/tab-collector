@@ -7,6 +7,14 @@ import { collectable } from "./url.js";
 
 // выполняется ВНУТРИ вкладки — только то, что есть на самой странице
 function readPage() {
+  // недописанный текст в основном кадре: такую вкладку при сборе не закрываем
+  const visible = (el) => el.getClientRects().length > 0;
+  const isSearch = (f) => f.tagName === "INPUT" && (f.type === "search" || /^(q|query|search|text)$/i.test(f.name || "") || !!f.closest('[role="search"], form[action*="search"]'));
+  let draft = false;
+  for (const f of document.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=email], input[type=url], input[type=number], input[type=tel]"))
+    if (f.value && f.value !== f.defaultValue && !isSearch(f) && visible(f)) draft = true;
+  const ed = document.activeElement;
+  if (ed && ed.isContentEditable && ed.textContent.trim()) draft = true;
   const pick = (...sels) => {
     for (const s of sels) {
       const el = document.querySelector(s);
@@ -23,6 +31,7 @@ function readPage() {
     ogType: pick('meta[property="og:type"]'),
     url: location.href,
     scrollY: window.scrollY,
+    draft,
   };
 }
 
@@ -30,7 +39,7 @@ async function grab(tab, timeout = 1500) {
   // выгруженная или ещё не загруженная вкладка скрипт не выполнит — хватит адреса и заголовка
   if (tab.discarded || tab.status === "unloaded" || !/^https?:/.test(tab.url)) return {};
   try {
-    const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage });
+    const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage, injectImmediately: true });
     const res = await Promise.race([run, new Promise((r) => setTimeout(() => r(null), timeout))]);
     return (res && res[0] && res[0].result) || {};
   } catch (e) {
@@ -47,18 +56,24 @@ export function untouchable(tab, extOrigin) {
   return "";
 }
 
-/** Собрать вкладки в список и закрыть их. onProgress(done, total). */
+/**
+ * Собрать вкладки в список и закрыть их. onProgress(done, total).
+ * Вкладки с недописанным текстом сохраняются в список, но остаются открытыми (kept).
+ * Возвращает { added, merged, ids, items (закрытые), kept (оставлены открытыми) }.
+ */
 export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   const items = [];
+  const drafts = new Set();
   let done = 0;
   const queue = tabs.slice();
   const worker = async () => {
     while (queue.length) {
       const tab = queue.shift();
       const g = await grab(tab);
+      if (g.draft) drafts.add(tab.id);
       // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы
       const t = g.url && /^https?:/.test(g.url) ? { ...tab, url: g.url } : tab;
-      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g) });
+      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g), draft: !!g.draft });
       done++;
       onProgress && onProgress(done, tabs.length);
     }
@@ -66,9 +81,11 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   await Promise.all(Array.from({ length: Math.min(8, tabs.length) }, worker));
   items.sort((a, b) => a.order - b.order);
   const res = await addItems(items.map((x) => x.item));
+  res.items = items.filter((x) => !x.draft).map((x) => x.item); // только те, что закрываем (для «Вернуть»)
+  res.kept = drafts.size;
   // закрываем только после того, как список записан: ничего не теряется
   if (close) {
-    const ids = tabs.map((t) => t.id);
+    const ids = tabs.map((t) => t.id).filter((id) => !drafts.has(id));
     for (let i = 0; i < ids.length; i += 50) {
       try {
         await chrome.tabs.remove(ids.slice(i, i + 50));
@@ -85,7 +102,8 @@ function hasDraft() {
   // видно ли поле (в том числе в окне поверх страницы с position: fixed)
   const visible = (el) => el.getClientRects().length > 0;
   // строку поиска страница часто заполняет сама (YouTube, Google) — это не черновик
-  const isSearch = (f) => f.type === "search" || /^(q|query|search|text)$/i.test(f.name || "") || !!f.closest('[role="search"], form[action*="search"]');
+  // только для однострочных полей: <textarea name="text"> — это комментарий, а не поиск
+  const isSearch = (f) => f.tagName === "INPUT" && (f.type === "search" || /^(q|query|search|text)$/i.test(f.name || "") || !!f.closest('[role="search"], form[action*="search"]'));
   const scan = (root) => {
     const fields = root.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=email], input[type=url], input[type=number], input[type=tel]");
     for (const f of fields) if (f.value && f.value !== f.defaultValue && !isSearch(f) && visible(f)) return true;
@@ -98,15 +116,17 @@ function hasDraft() {
   return !!(ed && ed.isContentEditable && ed.textContent.trim());
 }
 
+/** "yes" | "no" | "unknown": не успели проверить — не усыпляем (лучше оставить, чем потерять текст). */
 async function draftIn(tab) {
-  if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return false;
+  if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return "no";
   try {
-    // все кадры страницы: окно комментария или чата бывает во встроенном кадре
-    const run = chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: hasDraft });
-    const res = await Promise.race([run, new Promise((r) => setTimeout(() => r(null), 1000))]);
-    return !!(res && res.some((x) => x && x.result));
+    // все кадры страницы (окно комментария бывает во встроенном кадре); не ждём, пока догрузятся
+    const run = chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: hasDraft, injectImmediately: true });
+    const res = await Promise.race([run, new Promise((r) => setTimeout(() => r(null), 1500))]);
+    if (!res) return "unknown";
+    return res.some((x) => x && x.result) ? "yes" : "no";
   } catch (e) {
-    return false;
+    return "no"; // на страницу нельзя попасть скриптом (магазин расширений, PDF) — там и черновика нашего не найти
   }
 }
 
@@ -116,7 +136,7 @@ async function draftIn(tab) {
  * Возвращает { n, audible, drafts }.
  */
 export async function sleepTabs(tabs, onProgress) {
-  const out = { n: 0, audible: 0, drafts: 0 };
+  const out = { n: 0, audible: 0, drafts: 0, unknown: 0 };
   const queue = tabs.filter((t) => !t.active && !t.discarded);
   const total = queue.length;
   let done = 0;
@@ -124,8 +144,10 @@ export async function sleepTabs(tabs, onProgress) {
   const worker = async () => {
     while (queue.length) {
       const t = queue.shift();
+      const d = t.audible ? "" : await draftIn(t);
       if (t.audible) out.audible++;
-      else if (await draftIn(t)) out.drafts++;
+      else if (d === "yes") out.drafts++;
+      else if (d === "unknown") out.unknown++;
       else {
         try {
           if (await chrome.tabs.discard(t.id)) out.n++;

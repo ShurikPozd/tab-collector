@@ -1680,6 +1680,8 @@ mark {
 .in-panel .views {
   grid-area: views;
   justify-self: stretch;
+  /* разделы подстраиваются под свою ширину (узкая панель, крупный масштаб) */
+  container-type: inline-size;
 }
 
 .in-panel .views button {
@@ -2028,6 +2030,7 @@ mark {
   .views {
     grid-area: views;
     justify-self: stretch;
+    container-type: inline-size;
   }
   .views button {
     flex: 1;
@@ -2080,8 +2083,12 @@ mark {
     display: grid;
     place-items: center;
     grid-template-columns: 1fr;
-    width: 3rem;
-    height: 3rem;
+    /* пять кружков всегда помещаются: при крупном масштабе в узкой панели они чуть меньше */
+    flex: 0 1 3rem;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    aspect-ratio: 1;
     min-height: 0;
     padding: 0;
     border-radius: 999px;
@@ -2203,4 +2210,33 @@ button.chev {
 button.chev:hover {
   background: var(--bg-hover);
   color: var(--fg);
+}
+
+/* флажок поверх картинки: подложка — ровно квадрат флажка + равные поля, флажок строго по центру */
+.tiles .group.open .row > .chk,
+.cards.tiles .card > .chk {
+  display: grid;
+  place-items: center;
+  gap: 0;
+  width: calc(round(1.4rem, 2px) + 12px);
+  height: calc(round(1.4rem, 2px) + 12px);
+  padding: 0;
+  line-height: 0;
+}
+
+/* тесно (узкая панель и крупный масштаб): сначала прячется счётчик, потом — подписи, остаются значки */
+@container (max-width: 300px) {
+  .views .badge {
+    display: none;
+  }
+}
+
+@container (max-width: 200px) {
+  .views .v-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
 }

@@ -30,14 +30,19 @@ chrome.action.onClicked.addListener((tab) => openApp("", tab));
 async function devAutoReload() {
   try {
     const self = await chrome.management.getSelf();
-    if (self.installType !== "development") return;
+    if (self.installType !== "development") return chrome.alarms.clear("dev-reload");
+    // будильник — только у распакованного: у установленного из магазина фон зря не просыпается
+    if (!(await chrome.alarms.get("dev-reload"))) chrome.alarms.create("dev-reload", { periodInMinutes: 0.5 });
     const disk = await (await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" })).json();
-    if (disk && disk.version && disk.version !== chrome.runtime.getManifest().version) chrome.runtime.reload();
+    if (!disk || !disk.version || disk.version === chrome.runtime.getManifest().version) return;
+    // не посреди отправки в бота или сбора: иначе отправленное не отметится и уйдёт второй раз
+    const { held } = await navigator.locks.query();
+    if (held.some((l) => l.name === "tc-send" || l.name === "tc-collect" || l.name === "tc-store")) return;
+    chrome.runtime.reload();
   } catch (e) {
     /* файл в процессе записи — проверим в следующий раз */
   }
 }
-chrome.alarms.create("dev-reload", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((a) => a.name === "dev-reload" && void devAutoReload());
 void devAutoReload();
 
@@ -82,7 +87,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const site = siteOf(tab.url);
     const pick = all.filter((t) => t.id !== tab.id && !untouchable(t, EXT) && siteOf(t.url) === site);
     if (!pick.length) return badge("0", tab.id);
-    const res = await collectTabs(pick);
+    const res = await navigator.locks.request("tc-collect", () => collectTabs(pick));
     return badge(String(res.added + res.merged), tab.id);
   }
 });
@@ -110,13 +115,17 @@ async function takeScroll(tabId) {
 function discardWhenReady(tabId) {
   const done = () => chrome.tabs.onUpdated.removeListener(on);
   const real = (u) => u && u !== "about:blank";
+  let fired = false;
   const on = async (id, change, tab) => {
-    if (id !== tabId || !(real(change.url) || real(tab.url))) return;
+    if (fired || id !== tabId || !(real(change.url) || real(tab.url))) return;
+    fired = true;
     done();
     await chrome.tabs.discard(tabId).catch(() => {});
     await chrome.storage.session.remove(LAZY(tabId)); // теперь прокрутку можно применить при пробуждении
   };
   chrome.tabs.onUpdated.addListener(on);
+  // быстрая страница (из кэша) могла получить адрес ещё до того, как мы начали слушать
+  chrome.tabs.get(tabId).then((t) => on(tabId, {}, t), () => done());
   setTimeout(() => {
     done();
     chrome.storage.session.remove(LAZY(tabId));
@@ -232,7 +241,7 @@ async function takeShot(tabId) {
     if (PRIVATE.test(host)) return;
     // страница с полем пароля (вход, оплата) — тоже не снимаем
     // поле пароля (вход, оплата) — в любом кадре страницы, в том числе во встроенных окнах оплаты
-    const probes = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => !!document.querySelector('input[type="password"]') }).catch(() => null);
+    const probes = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => !!document.querySelector('input[type="password"]'), injectImmediately: true }).catch(() => null);
     if (!probes || probes.some((p) => p && p.result)) return;
     lastShot = Date.now();
     const data = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
