@@ -121,6 +121,19 @@ t("в бота уходят только веб-адреса до 2048 симв�
   assert.ok(!sendable({ url: "https://x.ru/" + "a".repeat(2100) }));
 });
 
+t("разные поиски не склеиваются (сбор закрыл бы вторую вкладку)", () => {
+  const k = (u) => normalizeUrl(u);
+  assert.notEqual(k("https://www.google.com/search?q=cats"), k("https://www.google.com/search?q=cats&tbm=isch"));
+  assert.notEqual(k("https://www.google.com/search?q=cats"), k("https://www.google.com/search?q=cats&udm=2"));
+  assert.notEqual(k("https://www.google.com/search?q=cats"), k("https://www.google.com/search?q=cats&start=10"));
+  assert.notEqual(k("https://yandex.ru/search/?text=x"), k("https://yandex.ru/search/?text=x&p=2"));
+  assert.equal(k("https://www.google.com/search?q=cats&ei=1&sca_esv=2"), k("https://google.com/search?q=Cats"));
+  // якорь из одного слова в почте — тоже разные страницы
+  assert.notEqual(k("https://mail.google.com/mail/u/0/#inbox"), k("https://mail.google.com/mail/u/0/#sent"));
+  assert.equal(k("https://example.com/post#comments"), k("https://example.com/post"));
+  // si/feature — метки YouTube, на других сайтах это обычные параметры
+  assert.notEqual(k("https://shop.ru/item?si=1"), k("https://shop.ru/item?si=2"));
+});
 t("поиск Google и Яндекса", () => {
   const r = recognize("https://www.google.com/search?q=%D1%84%D1%80%D0%B8%D1%80%D0%B5%D0%BD+%D0%B0%D0%BD%D0%B8%D0%BC%D0%B5&sca_esv=1");
   assert.equal(r.kind, "search");

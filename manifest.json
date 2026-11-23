@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Сборщик вкладок",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Собирает сотни открытых вкладок в один список, усыпляет лишние и отправляет выбранные ссылки с описанием в Telegram-бота.",
   "permissions": [
     "tabs",
@@ -10,7 +10,8 @@
     "scripting",
     "contextMenus",
     "favicon",
-    "sidePanel"
+    "sidePanel",
+    "alarms"
   ],
   "host_permissions": [
     "<all_urls>"

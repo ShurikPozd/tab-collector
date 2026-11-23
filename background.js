@@ -23,6 +23,24 @@ async function openApp(view, fromTab) {
 
 chrome.action.onClicked.addListener((tab) => openApp("", tab));
 
+// ---------- Само перезагружается при новой версии (как «Сводка комментариев YouTube») ----------
+// Расширение установлено из папки («распакованное»): когда в manifest.json на диске появляется
+// другая версия (её поднимают при каждой правке), оно перезапускается само — не нужно жать
+// «Обновить» на chrome://extensions. Для установленного из магазина ничего не делает.
+async function devAutoReload() {
+  try {
+    const self = await chrome.management.getSelf();
+    if (self.installType !== "development") return;
+    const disk = await (await fetch(chrome.runtime.getURL("manifest.json"), { cache: "no-store" })).json();
+    if (disk && disk.version && disk.version !== chrome.runtime.getManifest().version) chrome.runtime.reload();
+  } catch (e) {
+    /* файл в процессе записи — проверим в следующий раз */
+  }
+}
+chrome.alarms.create("dev-reload", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((a) => a.name === "dev-reload" && void devAutoReload());
+void devAutoReload();
+
 // Значок открывает боковую панель (как у «Сводки комментариев YouTube») или вкладку — по настройке.
 async function iconBehavior() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -30,9 +48,7 @@ async function iconBehavior() {
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: panel }).catch(() => {});
 }
 iconBehavior();
-chrome.storage.onChanged.addListener((ch, area) => {
-  if (area === "local" && ch.settings && (ch.settings.oldValue || {}).iconOpens !== (ch.settings.newValue || {}).iconOpens) iconBehavior();
-});
+// меняется в настройках — оттуда приходит сообщение «icon-behavior» (без слежения за каждой записью)
 
 function menus() {
   chrome.contextMenus.removeAll(() => {
@@ -74,42 +90,54 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // Открыть ссылки из списка; у тех, что были прокручены, — вернуть место прокрутки.
 // Нужная прокрутка хранится в chrome.storage.session: усыплённая вкладка грузится, когда вы
 // на неё перейдёте (через минуты), а фон к тому времени успевает уснуть и потерять память.
-const SCROLL = "scroll";
+// у каждой вкладки свой ключ — записи для разных вкладок не затирают друг друга
+const SK = (id) => `scroll:${id}`;
+const LAZY = (id) => `lazy:${id}`; // вкладка вот-вот уснёт: прокрутку применим, когда её разбудят
 
 async function rememberScroll(tabId, y) {
-  const d = (await chrome.storage.session.get(SCROLL))[SCROLL] || {};
-  d[tabId] = y;
-  await chrome.storage.session.set({ [SCROLL]: d });
+  await chrome.storage.session.set({ [SK(tabId)]: y });
 }
 
 async function takeScroll(tabId) {
-  const d = (await chrome.storage.session.get(SCROLL))[SCROLL] || {};
-  if (!(tabId in d)) return 0;
-  const y = d[tabId];
-  delete d[tabId];
-  await chrome.storage.session.set({ [SCROLL]: d });
+  const k = SK(tabId);
+  const y = (await chrome.storage.session.get(k))[k];
+  if (!y) return 0;
+  await chrome.storage.session.remove(k);
   return y;
 }
 
-// усыпить только что открытую вкладку, когда у неё уже есть адрес (иначе останется пустой)
+// усыпить только что открытую вкладку, когда у неё уже есть настоящий адрес (иначе проснётся пустой)
 function discardWhenReady(tabId) {
   const done = () => chrome.tabs.onUpdated.removeListener(on);
-  const on = (id, change, tab) => {
-    if (id !== tabId || !(change.url || tab.url || tab.pendingUrl)) return;
+  const real = (u) => u && u !== "about:blank";
+  const on = async (id, change, tab) => {
+    if (id !== tabId || !(real(change.url) || real(tab.url))) return;
     done();
-    chrome.tabs.discard(tabId).catch(() => {});
+    await chrome.tabs.discard(tabId).catch(() => {});
+    await chrome.storage.session.remove(LAZY(tabId)); // теперь прокрутку можно применить при пробуждении
   };
   chrome.tabs.onUpdated.addListener(on);
-  setTimeout(done, 15000);
+  setTimeout(() => {
+    done();
+    chrome.storage.session.remove(LAZY(tabId));
+  }, 15000);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg && msg.type === "icon-behavior") {
+    iconBehavior().then(() => reply({ ok: true }));
+    return true;
+  }
   if (msg && msg.type === "open-app") {
     (async () => {
-      const [active] = await chrome.tabs.query({ active: true, windowId: msg.windowId });
-      await chrome.storage.session.set({ fromTab: active ? active.id : null });
-      await openApp(msg.view === "library" ? "library" : "", active);
-      reply({ ok: true });
+      try {
+        const [active] = await chrome.tabs.query({ active: true, windowId: msg.windowId });
+        await chrome.storage.session.set({ fromTab: active ? active.id : null });
+        await openApp(msg.view === "library" ? "library" : "", active || { windowId: msg.windowId });
+        reply({ ok: true });
+      } catch (e) {
+        reply({ ok: false });
+      }
     })();
     return true;
   }
@@ -129,14 +157,16 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
             windowId: base && base.windowId,
             index: index === undefined ? undefined : index++,
           });
+          // все, кроме первой, — усыплёнными: загрузятся, когда вы на них перейдёте
+          const lazy = msg.lazy && msg.items.length > 1 && n >= 1;
+          if (lazy) await chrome.storage.session.set({ [LAZY(t.id)]: true });
           if (it.scrollY > 0) {
             await rememberScroll(t.id, it.scrollY);
             // быстрая страница могла загрузиться, пока запоминали, — тогда прокручиваем сразу
             const now = await chrome.tabs.get(t.id).catch(() => null);
-            if (now && now.status === "complete") applyScroll(t.id);
+            if (!lazy && now && now.status === "complete") applyScroll(t.id);
           }
-          // все, кроме первой, — усыплёнными: загрузятся, когда вы на них перейдёте
-          if (msg.lazy && msg.items.length > 1 && n >= 1) discardWhenReady(t.id);
+          if (lazy) discardWhenReady(t.id);
           n++;
         } catch (e) {
           /* одна негодная ссылка не мешает открыть остальные */
@@ -153,6 +183,8 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 });
 
 async function applyScroll(tabId) {
+  // вкладку сейчас усыпят — прокрутку не тратим, применим, когда вы на неё перейдёте
+  if ((await chrome.storage.session.get(LAZY(tabId)))[LAZY(tabId)]) return;
   const y = await takeScroll(tabId);
   if (!y) return;
   chrome.scripting
@@ -167,7 +199,7 @@ async function applyScroll(tabId) {
     })
     .catch(() => {});
 }
-chrome.tabs.onRemoved.addListener((id) => takeScroll(id).catch(() => {}));
+chrome.tabs.onRemoved.addListener((id) => chrome.storage.session.remove([SK(id), LAZY(id)]).catch(() => {}));
 
 // ---------------------------------------------------------------- снимки для предпросмотра
 // Когда вы переходите на вкладку (или она догрузилась на экране), снимаем видимую часть
@@ -175,7 +207,8 @@ chrome.tabs.onRemoved.addListener((id) => takeScroll(id).catch(() => {}));
 let shotTimer = null;
 let lastShot = 0;
 // банки, госуслуги, почта и входы — не снимаем
-const PRIVATE = /(^|\.)(bank|sber|sberbank|tinkoff|tbank|alfabank|vtb|raiffeisen|gazprombank|paypal|qiwi|yoomoney|gosuslugi|nalog|accounts\.google|login|auth|passport|id\.yandex)\b|^(mail|e\.mail|outlook|webmail)\./i;
+// банки, госуслуги, почта, мессенджеры и входы — не снимаем
+const PRIVATE = /(^|\.)(bank|sber|sberbank|tinkoff|tbank|alfabank|vtb|raiffeisen|gazprombank|paypal|qiwi|yoomoney|gosuslugi|nalog|accounts\.google|login|auth|passport|id\.yandex|web\.telegram|web\.whatsapp|discord|slack|messenger)\b|^(mail|e\.mail|outlook|webmail)\./i;
 
 async function shotsOn() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -198,8 +231,9 @@ async function takeShot(tabId) {
     const host = new URL(tab.url).hostname;
     if (PRIVATE.test(host)) return;
     // страница с полем пароля (вход, оплата) — тоже не снимаем
-    const [probe] = await chrome.scripting.executeScript({ target: { tabId }, func: () => !!document.querySelector('input[type="password"]') }).catch(() => [null]);
-    if (!probe || probe.result) return;
+    // поле пароля (вход, оплата) — в любом кадре страницы, в том числе во встроенных окнах оплаты
+    const probes = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => !!document.querySelector('input[type="password"]') }).catch(() => null);
+    if (!probes || probes.some((p) => p && p.result)) return;
     lastShot = Date.now();
     const data = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
     // пока снимали, вкладку могли переключить — проверяем, что сняли ту же страницу

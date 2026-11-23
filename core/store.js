@@ -54,19 +54,31 @@ const IT = "it:";
 export const isItemKey = (k) => k === "order" || k.startsWith(IT) || k === "items";
 
 async function readAll() {
-  const all = await area().get(null);
-  const byId = new Map();
-  for (const [k, v] of Object.entries(all)) if (k.startsWith(IT) && v && v.id) byId.set(v.id, v);
+  // только нужное: порядок, папки, настройки — и сами ссылки по порядку (без чтения всей базы)
+  const head = await area().get(["order", "folders", "settings", "items"]);
   let items;
-  if (Array.isArray(all.order)) {
-    items = all.order.map((id) => byId.get(id)).filter(Boolean);
-    // записи без места в порядке (сбой посреди записи) не теряем — в конец
-    if (items.length < byId.size) {
-      const seen = new Set(all.order);
-      for (const [id, it] of byId) if (!seen.has(id)) items.push(it);
-    }
-  } else items = Array.isArray(all.items) ? all.items : []; // старый формат
-  return { all, d: { items, folders: all.folders || [], settings: all.settings || {} } };
+  let all = head;
+  if (Array.isArray(head.order)) {
+    const got = head.order.length ? await area().get(head.order.map((id) => IT + id)) : {};
+    items = head.order.map((id) => got[IT + id]).filter(Boolean);
+  } else items = Array.isArray(head.items) ? head.items : []; // старый формат
+  return { all, d: { items, folders: head.folders || [], settings: head.settings || {} } };
+}
+
+/**
+ * Ссылки, у которых нет места в порядке, — это удалённые, чей ключ не успел стереться
+ * (браузер закрыли посреди удаления): новые ссылки всегда пишутся одним set вместе с order.
+ * Убираем их и старый ключ items, оставшийся после переноса. Раз за запуск страницы.
+ */
+export function cleanOrphans() {
+  return navigator.locks.request("tc-store", async () => {
+    const all = await area().get(null);
+    if (!Array.isArray(all.order)) return 0;
+    const keep = new Set(all.order.map((id) => IT + id));
+    const drop = Object.keys(all).filter((k) => (k.startsWith(IT) && !keep.has(k)) || k === "items");
+    if (drop.length) await area().remove(drop);
+    return drop.length;
+  });
 }
 
 export async function load() {
@@ -106,7 +118,7 @@ export function update(fn) {
     if (JSON.stringify(d.settings) !== settingsBefore) set.settings = d.settings;
     if (Object.keys(set).length) await area().set(set);
     // старый ключ и удалённые ссылки убираем только после того, как новое записалось
-    if (legacy && "items" in all) drop.push("items");
+    if ("items" in all && (legacy || Array.isArray(all.order))) drop.push("items");
     if (drop.length) await area().remove(drop.filter((k) => k !== IT + "undefined"));
     return res;
   });
@@ -206,8 +218,8 @@ export function importData(data) {
     const keys = new Set(d.items.map((it) => it.nkey));
     const folderIds = new Set(d.folders.map((f) => f.id));
     for (const f of data.folders || []) {
-      if (!f || typeof f.id !== "string" || typeof f.name !== "string" || folderIds.has(f.id)) continue;
-      d.folders.push({ id: f.id.slice(0, 40), name: f.name.slice(0, 60) });
+      if (!f || typeof f.id !== "string" || !/^[\w-]{1,60}$/.test(f.id) || typeof f.name !== "string" || folderIds.has(f.id)) continue;
+      d.folders.push({ id: f.id, name: f.name.slice(0, 60) });
       folderIds.add(f.id);
     }
     const ids = new Set(d.items.map((it) => it.id));

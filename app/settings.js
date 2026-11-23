@@ -77,7 +77,8 @@ function bind() {
   dlg.querySelectorAll("[data-opens]").forEach((b) =>
     b.addEventListener("click", async () => {
       applyOpens(b.dataset.opens);
-      await saveSettings({ iconOpens: b.dataset.opens }); // фон сам переключит поведение значка
+      await saveSettings({ iconOpens: b.dataset.opens });
+      chrome.runtime.sendMessage({ type: "icon-behavior" }).catch(() => {}); // фон переключит поведение значка
     })
   );
   $("set-token-eye").addEventListener("click", () => {

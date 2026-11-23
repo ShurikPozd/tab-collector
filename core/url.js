@@ -44,7 +44,8 @@ const GH_RESERVED = new Set([
   "site", "team", "home", "dashboard", "stars", "watching",
 ]);
 // метки отслеживания — не часть адреса (дубли с ними склеиваются)
-const TRACKING = /^(utm_[a-z]+|fbclid|gclid|yclid|ysclid|_openstat|ref_src|si|feature|pp|igshid|mc_[a-z]+)$/i;
+// si/feature/pp — метки только YouTube (там ссылка склеивается по id видео), на других сайтах не трогаем
+const TRACKING = /^(utm_[a-z]+|fbclid|gclid|yclid|ysclid|_openstat|ref_src|igshid|mc_[a-z]+)$/i;
 
 /** Хост без www. и m. — им группируются вкладки. */
 export function siteOf(url) {
@@ -69,6 +70,15 @@ export function collectable(url) {
  * якорь-маршрут (#inbox/AAA в почте, #@user в Telegram, #/page, #!, числа) — часть адреса.
  * У известных сайтов — по id (shikimori.one/animes/52991-frieren и /animes/52991 — одно).
  */
+const ANCHOR = /^#(|top|comments?|respond|reply[\w-]*|comment-\d+|content|main|section[\w-]*|toc[\w-]*|cite[\w-]*|h-[\w-]*|:~:text=.*)$/i;
+function decodeHash(h) {
+  try {
+    return decodeURIComponent(h);
+  } catch (e) {
+    return h;
+  }
+}
+
 export function normalizeUrl(url) {
   const r = recognize(url);
   if (r.key) return r.key;
@@ -79,7 +89,8 @@ export function normalizeUrl(url) {
     params.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const q = params.length ? "?" + new URLSearchParams(params).toString() : "";
     const path = u.pathname.replace(/\/+$/, "") || "";
-    const hash = u.hash && !/^#[A-Za-z][\w.:-]*$/.test(u.hash) ? u.hash : "";
+    // убираем только явные закладки на странице; #inbox и #sent в почте — разные адреса
+    const hash = u.hash && !ANCHOR.test(decodeHash(u.hash)) ? u.hash : "";
     return `${u.hostname.replace(/^(www|m)\./, "")}${u.port ? ":" + u.port : ""}${path}${q}${hash}`;
   } catch (e) {
     return url;
@@ -230,7 +241,9 @@ export function recognize(url) {
   const sq = searchOf(url);
   if (sq) {
     // разные запросы — разные ссылки; один и тот же запрос — одна
-    return { ...base, ...kindInfo("search"), provider: null, ref: sq, key: `search:${host}:${sq.q.toLowerCase().replace(/\s+/g, " ")}` };
+    // «cats», «Картинки: cats» и «cats, стр. 2» — разные вкладки: значимые параметры — в ключе
+    const extra = SEARCH_PARAMS.filter((p) => u.searchParams.get(p)).map((p) => `${p}=${u.searchParams.get(p)}`).join("&");
+    return { ...base, ...kindInfo("search"), provider: null, ref: sq, key: `search:${host}:${sq.q.toLowerCase().replace(/\s+/g, " ")}${extra ? "|" + extra : ""}` };
   }
 
   if (/^https?:$/.test(u.protocol)) return { ...base, provider: "page" };
@@ -270,6 +283,8 @@ const SEARCH = [
   [/^bing\.com$/, /^\/search$/, "q", "Bing"],
   [/^duckduckgo\.com$/, /^\/$/, "q", "DuckDuckGo"],
 ];
+
+const SEARCH_PARAMS = ["tbm", "udm", "tbs", "start", "p", "ia", "iax", "lr", "type", "first"];
 
 /** Страница поиска: {q, engine} или null. */
 export function searchOf(url) {

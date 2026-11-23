@@ -417,8 +417,16 @@ button.spin svg {
   display: flex;
 }
 
+/* кнопки делят ширину поровну и умеют сжиматься: в узкой панели ничего не вылезает за край,
+   длинная подпись («Как в системе») переносится на вторую строку */
 .seg-wide button {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  height: auto;
+  min-height: calc(var(--h-btn) - 8px);
+  padding: 4px 6px;
+  white-space: normal;
+  line-height: 1.15;
 }
 
 /* флажок: input скрыт, рисуем .box */
@@ -825,6 +833,46 @@ input:disabled + .box {
   padding-left: 46px;
   min-height: 2.3rem;
   font-size: 0.94rem;
+}
+
+/* кнопки «Папки ▾» и «Сайты ▾» — только на узком экране (на широком всё списком слева) */
+.nav-pick {
+  display: none;
+}
+
+.nav-pick .n-count svg {
+  transform: rotate(90deg);
+}
+
+.nav-pick.on {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.menu .fav {
+  width: 1.6rem;
+  height: 1.6rem;
+  background: transparent;
+}
+
+.menu .fav img {
+  width: 1rem;
+  height: 1rem;
+}
+
+.menu .m-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu .m-count {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .nav-emoji {
@@ -1478,15 +1526,22 @@ mark {
     padding: 6px;
     overflow-x: auto;
   }
+  /* узко: разделы переносятся на новую строку (ничего не обрезано), сайты — в меню «Сайт ▾» */
+  .side {
+    overflow: visible;
+  }
   .side-nav {
     flex-direction: row;
+    flex-wrap: wrap;
     gap: 4px;
   }
-  /* лента листается вбок (и колесом): затухание у правого края подсказывает, что там ещё есть */
-  .side {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
-    scrollbar-width: none;
+  /* узко: список папок и сайтов — в меню кнопок «Папки ▾» и «Сайты ▾» */
+  .nav-site,
+  .nav-folder {
+    display: none;
+  }
+  .nav-pick {
+    display: grid;
   }
   .side-h,
   .side-empty,
@@ -1635,8 +1690,6 @@ mark {
 
 .in-panel .search {
   grid-area: search;
-  grid-column: auto;
-  grid-row: auto;
 }
 
 .in-panel .top-btns {
@@ -1983,8 +2036,6 @@ mark {
   }
   .search {
     grid-area: search;
-    grid-column: auto;
-    grid-row: auto;
   }
   .top-btns {
     grid-area: btns;
@@ -1995,4 +2046,161 @@ mark {
     white-space: normal;
     overflow-wrap: anywhere;
   }
+}
+
+/* очень узко (панель ~300 px): окно настроек — с полями поуже, чтобы подписи поместились */
+@media (max-width: 400px) {
+  .dlg-body {
+    padding: 18px;
+  }
+  .seg-wide button {
+    padding: 4px 4px;
+  }
+}
+
+/* название раздела рядом со счётчиком — только на узком экране, где у значков нет подписей */
+.where-now {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- телефон и узкая панель: значки-кружки
+   Разделы — одной строкой круглых значков с числом (подпись — при наведении и рядом со
+   счётчиком ссылок); «Плитки / Список» — тоже значками. */
+@media (max-width: 600px) {
+  .side {
+    padding: 6px;
+  }
+  .side-nav {
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .side-nav .nav-item {
+    position: relative;
+    display: grid;
+    place-items: center;
+    grid-template-columns: 1fr;
+    width: 3rem;
+    height: 3rem;
+    min-height: 0;
+    padding: 0;
+    border-radius: 999px;
+  }
+  .side-nav .nav-site,
+  .side-nav .nav-folder {
+    display: none;
+  }
+  .side-nav .nav-item .n-label,
+  .side-nav .nav-pick .n-count {
+    display: none;
+  }
+  .side-nav .nav-emoji {
+    width: auto;
+  }
+  /* число — маленькой плашкой в углу кружка */
+  .side-nav .nav-main .n-count {
+    position: absolute;
+    top: -3px;
+    right: -5px;
+    min-width: 1.35rem;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: var(--bg-hover);
+    color: var(--fg-2);
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.3;
+    text-align: center;
+  }
+  .side-nav .nav-item[aria-current="true"] .n-count {
+    background: var(--accent);
+    color: #fff;
+  }
+  .where-now {
+    display: inline;
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .layout-seg button {
+    padding: 0 12px;
+  }
+  /* строка «☐ Выбрать все · Все ссылки · 5 ссылок … [плитки|список]» — без пустоты справа */
+  .bar .check-all {
+    order: 1;
+  }
+  .bar .layout-seg {
+    order: 2;
+    margin-left: auto;
+  }
+  /* «Все ссылки · 5 ссылок» — своей строкой, а не узкой колонкой */
+  .bar .summary {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .bar .folder-tools {
+    order: 4;
+    flex-basis: 100%;
+  }
+  .bar .bar-actions {
+    order: 5;
+  }
+  .bar > .seg:not(.layout-seg) {
+    order: 0;
+  }
+  .layout-seg .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+/* окно настроек на узком экране: тема — значками-кружками */
+@media (max-width: 480px) {
+  [data-theme-set] .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+[data-theme-set],
+[data-opens] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+/* плитка без картинки и без снимка: не тратим место на большой пустой квадрат */
+.cards.tiles .card > .thumb:not(.poster):not(.shot):has(img.favimg),
+.cards.tiles .card > .thumb:not(.poster):not(.shot):has(svg) {
+  aspect-ratio: 3 / 1;
+}
+
+/* снимка не оказалось — миниатюра с иконкой сайта (подставляется в fillShots) */
+.cards.tiles .card > .thumb.no-shot {
+  aspect-ratio: 3 / 1;
+}
+
+/* кнопка раскрытия группы — настоящая кнопка (клавиатура: Tab, Enter/Пробел) */
+button.chev {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+button.chev:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
 }

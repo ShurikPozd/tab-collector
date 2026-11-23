@@ -26,13 +26,21 @@ async function flush(patches) {
     for (const it of d.items) {
       const p = batch.get(it.id);
       if (!p) continue;
+      if (it.enrich !== "pending") continue; // другая страница уже уточнила — не затираем
       for (const k of FIELDS) if (p[k]) it[k] = p[k];
       it.enrich = p.enrich;
     }
   });
 }
 
-export async function runEnrich() {
+// Уточняет только одна страница (вкладка или любая из панелей): замок общий для всех —
+// иначе запросы к сайтам удваивались бы и упирались в их лимиты.
+export function runEnrich() {
+  if (running) return Promise.resolve();
+  return navigator.locks.request("tc-enrich", { ifAvailable: true }, (lock) => (lock ? enrichLoop() : null));
+}
+
+async function enrichLoop() {
   if (running) return;
   running = true;
   const patches = new Map();
@@ -57,7 +65,7 @@ export async function runEnrich() {
           patches.set(it.id, p);
           left = Math.max(0, left - 1);
           onState(left);
-          if (!timer) timer = setTimeout(() => ((timer = null), flush(patches)), 1500);
+          if (!timer) timer = setTimeout(() => ((timer = null), flush(patches)), 3000);
         }
       };
       // разные сайты идут параллельно, один и тот же — с паузами (см. polite в enrich.js)

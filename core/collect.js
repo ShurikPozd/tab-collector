@@ -82,8 +82,18 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
 
 // выполняется ВНУТРИ вкладки: есть ли недописанный текст (поле изменено, но не отправлено)
 function hasDraft() {
-  const fields = document.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=number], input[type=tel]");
-  for (const f of fields) if (f.value && f.value !== f.defaultValue && f.offsetParent !== null) return true;
+  // видно ли поле (в том числе в окне поверх страницы с position: fixed)
+  const visible = (el) => el.getClientRects().length > 0;
+  // строку поиска страница часто заполняет сама (YouTube, Google) — это не черновик
+  const isSearch = (f) => f.type === "search" || /^(q|query|search|text)$/i.test(f.name || "") || !!f.closest('[role="search"], form[action*="search"]');
+  const scan = (root) => {
+    const fields = root.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=email], input[type=url], input[type=number], input[type=tel]");
+    for (const f of fields) if (f.value && f.value !== f.defaultValue && !isSearch(f) && visible(f)) return true;
+    for (const el of root.querySelectorAll("*")) if (el.shadowRoot && scan(el.shadowRoot)) return true;
+    return false;
+  };
+  if (scan(document)) return true;
+  // редактор поста/письма (contenteditable), в котором вы сейчас пишете
   const ed = document.activeElement;
   return !!(ed && ed.isContentEditable && ed.textContent.trim());
 }
@@ -91,9 +101,10 @@ function hasDraft() {
 async function draftIn(tab) {
   if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return false;
   try {
-    const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: hasDraft });
+    // все кадры страницы: окно комментария или чата бывает во встроенном кадре
+    const run = chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: hasDraft });
     const res = await Promise.race([run, new Promise((r) => setTimeout(() => r(null), 1000))]);
-    return !!(res && res[0] && res[0].result);
+    return !!(res && res.some((x) => x && x.result));
   } catch (e) {
     return false;
   }
@@ -104,23 +115,27 @@ async function draftIn(tab) {
  * и с недописанным текстом — Chrome при выгрузке его не сохранит.
  * Возвращает { n, audible, drafts }.
  */
-export async function sleepTabs(tabs) {
+export async function sleepTabs(tabs, onProgress) {
   const out = { n: 0, audible: 0, drafts: 0 };
-  for (const t of tabs) {
-    if (t.active || t.discarded) continue;
-    if (t.audible) {
-      out.audible++;
-      continue;
+  const queue = tabs.filter((t) => !t.active && !t.discarded);
+  const total = queue.length;
+  let done = 0;
+  // по 8 вкладок одновременно, как при сборе: сотни вкладок — секунды, а не минуты
+  const worker = async () => {
+    while (queue.length) {
+      const t = queue.shift();
+      if (t.audible) out.audible++;
+      else if (await draftIn(t)) out.drafts++;
+      else {
+        try {
+          if (await chrome.tabs.discard(t.id)) out.n++;
+        } catch (e) {
+          /* вкладку закрыли или её нельзя выгрузить */
+        }
+      }
+      onProgress && onProgress(++done, total);
     }
-    if (await draftIn(t)) {
-      out.drafts++;
-      continue;
-    }
-    try {
-      if (await chrome.tabs.discard(t.id)) out.n++;
-    } catch (e) {
-      /* вкладку закрыли или её нельзя выгрузить */
-    }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, total) }, worker));
   return out;
 }

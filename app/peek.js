@@ -11,17 +11,15 @@ let el = null;
 let timer = null;
 let current = null;
 
-export async function shotUrl(key) {
-  if (urls.has(key)) return urls.get(key);
-  const blob = await getShot(key).catch(() => null);
-  const u = blob ? URL.createObjectURL(blob) : "";
-  urls.set(key, u);
-  return u;
+// кэшируем обещание: параллельные запросы одного снимка не создают лишних адресов
+export function shotUrl(key) {
+  if (!urls.has(key)) urls.set(key, getShot(key).then((b) => (b ? URL.createObjectURL(b) : ""), () => ""));
+  return urls.get(key);
 }
 
 /** Снимок обновился (или удалён) — забыть закэшированный адрес. */
 export function forgetShots() {
-  for (const u of urls.values()) if (u) URL.revokeObjectURL(u);
+  for (const p of urls.values()) p.then((u) => u && URL.revokeObjectURL(u));
   urls.clear();
 }
 

@@ -7,7 +7,7 @@ globalThis.chrome = {
   storage: {
     local: {
       async get(keys) {
-        if (keys === null) return structuredClone(mem);
+        if (keys === null || keys === undefined) return structuredClone(mem);
         const list = typeof keys === "string" ? [keys] : keys;
         return Object.fromEntries(list.filter((k) => k in mem).map((k) => [k, structuredClone(mem[k])]));
       },
@@ -27,7 +27,7 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true,
 });
 
-const { load, addItems, patchItems, removeItems, restoreItems, makeItem, importData } = await import("../core/store.js");
+const { load, addItems, patchItems, removeItems, restoreItems, makeItem, importData, cleanOrphans } = await import("../core/store.js");
 
 let ok = 0;
 let fail = 0;
@@ -78,11 +78,17 @@ await t("удаление и «Вернуть» — на прежние мест
   assert.deepEqual((await load()).items.map((i) => i.url), ["https://a.ru/3", "https://a.ru/1", "https://a.ru/2"]);
 });
 
-await t("ссылка без места в порядке не теряется", async () => {
-  const lost = makeItem(tab("https://a.ru/lost"));
-  mem[`it:${lost.id}`] = lost;
-  const d = await load();
-  assert.ok(d.items.some((i) => i.url === "https://a.ru/lost"));
+await t("недостёртая удалённая ссылка не «воскресает» и убирается", async () => {
+  const ghost = makeItem(tab("https://a.ru/ghost"));
+  mem[`it:${ghost.id}`] = ghost; // как будто remove не успел пройти
+  mem.items = []; // и старый ключ после переноса остался
+  assert.ok(!(await load()).items.some((i) => i.url === "https://a.ru/ghost"));
+  await patchItems([], {}); // обычная запись уже убирает оставшийся старый ключ items
+  assert.ok(!("items" in mem));
+  assert.ok(!(await load()).items.some((i) => i.url === "https://a.ru/ghost"));
+  const n = await cleanOrphans(); // а недостёртую ссылку — уборка при запуске страницы
+  assert.equal(n, 1);
+  assert.ok(!(`it:${ghost.id}` in mem) && !("items" in mem));
 });
 
 await t("загрузка копии: только веб-адреса, без чужого HTML в id", async () => {
