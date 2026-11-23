@@ -1,6 +1,6 @@
 // Автопроверки чистых модулей (без Chrome): node tests/run.mjs
 import assert from "node:assert/strict";
-import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType } from "../core/url.js";
+import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf, siteLabel } from "../core/url.js";
 import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
 import { sendable } from "../core/bot.js";
@@ -119,6 +119,18 @@ t("в бота уходят только веб-адреса до 2048 симв�
   assert.ok(!sendable({ url: "file:///C:/a.html" }));
   assert.ok(!sendable({ url: "ftp://x.ru/a" }));
   assert.ok(!sendable({ url: "https://x.ru/" + "a".repeat(2100) }));
+});
+
+t("поиск Google и Яндекса", () => {
+  const r = recognize("https://www.google.com/search?q=%D1%84%D1%80%D0%B8%D1%80%D0%B5%D0%BD+%D0%B0%D0%BD%D0%B8%D0%BC%D0%B5&sca_esv=1");
+  assert.equal(r.kind, "search");
+  assert.deepEqual(r.ref, { q: "фрирен аниме", engine: "Google" });
+  assert.equal(normalizeUrl("https://www.google.com/search?q=Frieren&ei=1"), normalizeUrl("https://google.com/search?q=frieren&ei=2"));
+  assert.notEqual(normalizeUrl("https://google.com/search?q=a"), normalizeUrl("https://google.com/search?q=b"));
+  assert.equal(searchOf("https://ya.ru/search/?text=погода").engine, "Яндекс");
+  assert.equal(searchOf("https://yandex.ru/search/?text=x").q, "x");
+  assert.equal(searchOf("https://www.google.com/maps"), null);
+  assert.equal(siteLabel({ site: "file" }), "Файлы на компьютере");
 });
 
 // ---------------------------------------------------------------- описания

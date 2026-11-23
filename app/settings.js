@@ -11,6 +11,30 @@ const $ = (id) => document.getElementById(id);
 let bound = false;
 let onChange = () => {};
 
+const PANEL = new URLSearchParams(location.search).has("panel");
+const SCALE_KEY = PANEL ? "scalePanel" : "scaleTab";
+
+/** Масштаб интерфейса: свой для панели и для вкладки. */
+export function applyScale(z) {
+  z = Number(z) || 1;
+  document.documentElement.style.setProperty("--ui-scale", String(z));
+  try {
+    localStorage.setItem(PANEL ? "tc:scale:panel" : "tc:scale:tab", String(z));
+  } catch (e) {
+    /* не критично */
+  }
+  document.querySelectorAll("[data-scale]").forEach((b) => b.setAttribute("aria-checked", String(Number(b.dataset.scale) === z)));
+  window.dispatchEvent(new Event("resize")); // подсказка в поиске и раскладка — под новый размер
+}
+
+export function scaleOf(settings) {
+  return Number(settings[SCALE_KEY]) || 1;
+}
+
+function applyOpens(v) {
+  document.querySelectorAll("[data-opens]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.opens === v)));
+}
+
 export function applyTheme(t) {
   const root = document.documentElement;
   if (t === "light" || t === "dark") root.dataset.theme = t;
@@ -42,6 +66,18 @@ function bind() {
     b.addEventListener("click", async () => {
       applyTheme(b.dataset.themeSet);
       await saveSettings({ theme: b.dataset.themeSet });
+    })
+  );
+  dlg.querySelectorAll("[data-scale]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      applyScale(b.dataset.scale);
+      await saveSettings({ [SCALE_KEY]: Number(b.dataset.scale) });
+    })
+  );
+  dlg.querySelectorAll("[data-opens]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      applyOpens(b.dataset.opens);
+      await saveSettings({ iconOpens: b.dataset.opens }); // фон сам переключит поведение значка
     })
   );
   $("set-token-eye").addEventListener("click", () => {
@@ -122,6 +158,11 @@ export async function openSettings(changed) {
     ? "Сейчас используется секрет из файла local-config.js. Впишите сюда, чтобы заменить."
     : "Тот же секрет, что у «Сводки комментариев YouTube». Хранится только в этом браузере.";
   applyTheme(settings.theme || "auto");
+  applyScale(scaleOf(settings));
+  applyOpens(settings.iconOpens || "panel");
+  $("scale-hint").textContent = PANEL
+    ? "Для боковой панели. Во вкладке масштаб настраивается отдельно."
+    : "Для страницы во вкладке. В боковой панели масштаб настраивается отдельно.";
   $("set-shots").checked = settings.shots !== false;
   await shotsCount();
   hint("");

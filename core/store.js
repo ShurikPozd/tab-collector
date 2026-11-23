@@ -1,8 +1,11 @@
 // Хранилище списка: chrome.storage.local (unlimitedStorage).
-//   items   — собранные ссылки (см. makeItem)
+//   it:<id> — каждая собранная ссылка отдельно (см. makeItem): изменение одной ссылки
+//             не перезаписывает весь список (важно при тысячах ссылок)
+//   order   — порядок ссылок [id, …] (новые — сверху)
 //   folders — свои папки [{id, name}]
-//   settings — адрес бота, секрет, тема
-// Все записи — через update(): прочитать → изменить → записать одним set().
+//   settings — адрес бота, секрет, тема, масштаб
+// Все записи — через update(): прочитать → изменить → записать только изменившееся.
+// Старый формат (весь список одним ключом items) переносится при первой записи.
 
 import { normalizeUrl, recognize, kindFromOgType, kindMeta } from "./url.js";
 
@@ -19,11 +22,12 @@ export function makeItem(tab, grab = {}, now = Date.now()) {
   if (r.kind === "page" && grab.ogType) r = { ...r, ...kindMeta(kindFromOgType(grab.ogType)) };
   const desc = (grab.description || "").trim();
   const known = r.provider && r.provider !== "page";
+  const search = r.kind === "search" && r.ref;
   return {
     id: uid(),
     url: tab.url,
     nkey: normalizeUrl(tab.url),
-    title: (grab.title || tab.title || tab.url).trim(),
+    title: search ? `«${search.q}»` : (grab.title || tab.title || tab.url).trim(),
     favicon: tab.favIconUrl && /^https?:|^data:image\//.test(tab.favIconUrl) ? tab.favIconUrl : "",
     site: r.site,
     siteName: grab.siteName || "",
@@ -33,7 +37,7 @@ export function makeItem(tab, grab = {}, now = Date.now()) {
     icon: r.icon,
     kindLabel: r.kindLabel,
     kindLocked: r.kind !== "page",
-    meta: "",
+    meta: search ? `Поиск в ${search.engine}` : "",
     description: desc.slice(0, 600),
     image: grab.image && /^https:\/\//.test(grab.image) ? grab.image : "",
     scrollY: Math.max(0, Math.round(grab.scrollY || 0)),
@@ -42,25 +46,68 @@ export function makeItem(tab, grab = {}, now = Date.now()) {
     sentAt: null,
     sentCategory: "",
     // известные сайты — уточняем через API; остальные — если страница не отдала описания
-    enrich: (known || !desc) && /^https?:/.test(tab.url) ? "pending" : "done",
+    enrich: (known || !desc) && !search && /^https?:/.test(tab.url) ? "pending" : "done",
   };
 }
 
+const IT = "it:";
+export const isItemKey = (k) => k === "order" || k.startsWith(IT) || k === "items";
+
+async function readAll() {
+  const all = await area().get(null);
+  const byId = new Map();
+  for (const [k, v] of Object.entries(all)) if (k.startsWith(IT) && v && v.id) byId.set(v.id, v);
+  let items;
+  if (Array.isArray(all.order)) {
+    items = all.order.map((id) => byId.get(id)).filter(Boolean);
+    // записи без места в порядке (сбой посреди записи) не теряем — в конец
+    if (items.length < byId.size) {
+      const seen = new Set(all.order);
+      for (const [id, it] of byId) if (!seen.has(id)) items.push(it);
+    }
+  } else items = Array.isArray(all.items) ? all.items : []; // старый формат
+  return { all, d: { items, folders: all.folders || [], settings: all.settings || {} } };
+}
+
 export async function load() {
-  const d = await area().get(["items", "folders", "settings"]);
-  return { items: d.items || [], folders: d.folders || [], settings: d.settings || {} };
+  return (await readAll()).d;
+}
+
+/** Только настройки — без чтения всего списка. */
+export async function loadSettings() {
+  return (await area().get("settings")).settings || {};
 }
 
 /**
  * Изменения по одному: прочитать → изменить → записать. Замок navigator.locks общий для
  * фона и всех страниц расширения — иначе страница (уточнение описаний) и фон (сбор из меню
- * значка) затирали бы записи друг друга.
+ * значка) затирали бы записи друг друга. Пишутся только изменившиеся ссылки.
  */
 export function update(fn) {
   return navigator.locks.request("tc-store", async () => {
-    const d = await load();
+    const { all, d } = await readAll();
+    const legacy = !Array.isArray(all.order);
+    const before = new Map(d.items.map((it) => [it.id, JSON.stringify(it)]));
+    const foldersBefore = JSON.stringify(d.folders);
+    const settingsBefore = JSON.stringify(d.settings);
     const res = await fn(d);
-    await area().set({ items: d.items, folders: d.folders, settings: d.settings });
+
+    const set = {};
+    const ids = [];
+    for (const it of d.items) {
+      ids.push(it.id);
+      const j = JSON.stringify(it);
+      if (legacy || before.get(it.id) !== j) set[IT + it.id] = it;
+    }
+    const keep = new Set(ids);
+    const drop = [...before.keys()].filter((id) => !keep.has(id)).map((id) => IT + id);
+    if (legacy || ids.length !== before.size || ids.some((id, i) => id !== (all.order || [])[i])) set.order = ids;
+    if (JSON.stringify(d.folders) !== foldersBefore || legacy) set.folders = d.folders;
+    if (JSON.stringify(d.settings) !== settingsBefore) set.settings = d.settings;
+    if (Object.keys(set).length) await area().set(set);
+    // старый ключ и удалённые ссылки убираем только после того, как новое записалось
+    if (legacy && "items" in all) drop.push("items");
+    if (drop.length) await area().remove(drop.filter((k) => k !== IT + "undefined"));
     return res;
   });
 }

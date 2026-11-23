@@ -1,10 +1,20 @@
 {
   "manifest_version": 3,
   "name": "Сборщик вкладок",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Собирает сотни открытых вкладок в один список, усыпляет лишние и отправляет выбранные ссылки с описанием в Telegram-бота.",
-  "permissions": ["tabs", "storage", "unlimitedStorage", "scripting", "contextMenus", "favicon"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "tabs",
+    "storage",
+    "unlimitedStorage",
+    "scripting",
+    "contextMenus",
+    "favicon",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "incognito": "not_allowed",
   "background": {
     "service_worker": "background.js",
@@ -26,8 +36,13 @@
   },
   "commands": {
     "_execute_action": {
-      "suggested_key": { "default": "Alt+Shift+S" },
-      "description": "Открыть сборщик вкладок"
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Открыть сборщик вкладок (боковую панель или вкладку — как в настройках)"
     }
+  },
+  "side_panel": {
+    "default_path": "app/app.html?panel=1"
   }
 }

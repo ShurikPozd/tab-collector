@@ -80,16 +80,47 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   return res;
 }
 
-/** Выгрузить из памяти. Пропускаем активные (Chrome не даст) и со звуком (музыка, звонок). */
+// выполняется ВНУТРИ вкладки: есть ли недописанный текст (поле изменено, но не отправлено)
+function hasDraft() {
+  const fields = document.querySelectorAll("textarea, input:not([type]), input[type=text], input[type=search], input[type=email], input[type=url], input[type=number], input[type=tel]");
+  for (const f of fields) if (f.value && f.value !== f.defaultValue && f.offsetParent !== null) return true;
+  const ed = document.activeElement;
+  return !!(ed && ed.isContentEditable && ed.textContent.trim());
+}
+
+async function draftIn(tab) {
+  if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return false;
+  try {
+    const run = chrome.scripting.executeScript({ target: { tabId: tab.id }, func: hasDraft });
+    const res = await Promise.race([run, new Promise((r) => setTimeout(() => r(null), 1000))]);
+    return !!(res && res[0] && res[0].result);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Выгрузить из памяти. Пропускаем активные (Chrome не даст), со звуком (музыка, звонок)
+ * и с недописанным текстом — Chrome при выгрузке его не сохранит.
+ * Возвращает { n, audible, drafts }.
+ */
 export async function sleepTabs(tabs) {
-  let n = 0;
+  const out = { n: 0, audible: 0, drafts: 0 };
   for (const t of tabs) {
-    if (t.active || t.discarded || t.audible) continue;
+    if (t.active || t.discarded) continue;
+    if (t.audible) {
+      out.audible++;
+      continue;
+    }
+    if (await draftIn(t)) {
+      out.drafts++;
+      continue;
+    }
     try {
-      if (await chrome.tabs.discard(t.id)) n++;
+      if (await chrome.tabs.discard(t.id)) out.n++;
     } catch (e) {
       /* вкладку закрыли или её нельзя выгрузить */
     }
   }
-  return n;
+  return out;
 }

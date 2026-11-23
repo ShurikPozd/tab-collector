@@ -2,7 +2,7 @@
 // Секрет — в настройках расширения или в local-config.js (файл не попадает в git).
 
 import { DEFAULTS } from "../config.js";
-import { load } from "./store.js";
+import { loadSettings } from "./store.js";
 import { payload, batches, botError } from "./format.js";
 
 let localCfg = null;
@@ -25,7 +25,7 @@ async function localConfig() {
 }
 
 export async function botSettings() {
-  const { settings } = await load();
+  const settings = await loadSettings();
   // local-config.js читаем, только если в настройках чего-то нет (файла может и не быть)
   const lc = settings.token && settings.baseUrl ? {} : await localConfig();
   return {

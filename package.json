@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/run.mjs && node --experimental-vm-modules --no-warnings tests/check.mjs"
+    "test": "node tests/run.mjs && node tests/store.mjs && node --experimental-vm-modules --no-warnings tests/check.mjs"
   }
 }

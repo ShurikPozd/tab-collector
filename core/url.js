@@ -17,6 +17,7 @@ export const KINDS = {
   pr: { icon: "🔀", label: "Pull request" },
   user: { icon: "🧑‍💻", label: "Профиль" },
   wiki: { icon: "📘", label: "Википедия" },
+  search: { icon: "🔎", label: "Поиск" },
   article: { icon: "📰", label: "Статья" },
   news: { icon: "🗞️", label: "Новость" },
   product: { icon: "🛒", label: "Товар" },
@@ -226,6 +227,12 @@ export function recognize(url) {
     }
   }
 
+  const sq = searchOf(url);
+  if (sq) {
+    // разные запросы — разные ссылки; один и тот же запрос — одна
+    return { ...base, ...kindInfo("search"), provider: null, ref: sq, key: `search:${host}:${sq.q.toLowerCase().replace(/\s+/g, " ")}` };
+  }
+
   if (/^https?:$/.test(u.protocol)) return { ...base, provider: "page" };
   return base;
 }
@@ -247,5 +254,34 @@ export function kindMeta(kind) {
 
 /** Подпись сайта: «Shikimori», «Хабр» или хост. */
 export function siteLabel(item) {
+  if (item.site === "file") return "Файлы на компьютере";
   return (item.provider && SITE_NAMES[item.provider]) || item.siteName || item.site || "";
+}
+
+/** Подпись группы вкладок по хосту. */
+export function hostLabel(site) {
+  return site === "file" ? "Файлы на компьютере" : site || "без адреса";
+}
+
+// поисковые страницы: хост → [путь, параметр запроса, название поисковика]
+const SEARCH = [
+  [/^google\.[a-z.]+$/, /^\/search$/, "q", "Google"],
+  [/^(yandex\.[a-z.]+|ya\.ru)$/, /^\/search\/?$/, "text", "Яндекс"],
+  [/^bing\.com$/, /^\/search$/, "q", "Bing"],
+  [/^duckduckgo\.com$/, /^\/$/, "q", "DuckDuckGo"],
+];
+
+/** Страница поиска: {q, engine} или null. */
+export function searchOf(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^(www|m)\./, "");
+    for (const [h, p, param, engine] of SEARCH) {
+      const q = u.searchParams.get(param);
+      if (h.test(host) && p.test(u.pathname) && q && q.trim()) return { q: q.trim(), engine };
+    }
+  } catch (e) {
+    /* не адрес */
+  }
+  return null;
 }

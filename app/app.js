@@ -2,17 +2,18 @@
 // и «Собранные» (список с папками, поиском, открытием и отправкой в Telegram).
 
 import { hydrateIcons, icon } from "./icons.js";
-import { load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
+import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
 import { collectTabs, sleepTabs, untouchable } from "../core/collect.js";
-import { recognize, siteOf, siteLabel, normalizeUrl, KINDS } from "../core/url.js";
+import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS } from "../core/url.js";
 import { hasShots } from "../core/shots.js";
 import { bindPeek, shotUrl, forgetShots } from "./peek.js";
 import { runEnrich, onEnrichState, retryFailed } from "./enricher.js";
 import { openSend } from "./send.js";
-import { openSettings, applyTheme } from "./settings.js";
+import { openSettings, applyTheme, applyScale, scaleOf } from "./settings.js";
 import { askName, confirmDlg, esc } from "./ui.js";
 
 const EXT = chrome.runtime.getURL("");
+const PANEL = new URLSearchParams(location.search).has("panel"); // открыто в боковой панели
 const PAGE = 200;
 const $ = (id) => document.getElementById(id);
 
@@ -33,7 +34,15 @@ const st = {
   shown: PAGE,
   enrichLeft: 0,
   shotKeys: new Set(), // у каких ссылок есть снимок страницы
+  layout: { open: "tiles", lib: "tiles" }, // плитками (галерея) или списком
 };
+
+/** Переключатели «Плитки / Список» и классы списков. */
+function applyLayout() {
+  $("open-list").classList.toggle("tiles", st.layout.open === "tiles");
+  $("lib-list").classList.toggle("tiles", st.layout.lib === "tiles");
+  document.querySelectorAll("[data-layout]").forEach((b) => b.setAttribute("aria-checked", String(st.layout[b.dataset.for] === b.dataset.layout)));
+}
 
 async function refreshShots() {
   const keys = new Set(st.items.map((it) => it.nkey));
@@ -92,8 +101,10 @@ const nLinks = (n) => `${n} ${plural(n, "ссылка", "ссылки", "ссы�
 const nLinksAcc = (n) => `${n} ${plural(n, "ссылку", "ссылки", "ссылок")}`;
 const nSites = (n) => `${n} ${plural(n, "сайте", "сайтах", "сайтах")}`;
 
-function favImg(url, site) {
-  if (url) return `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
+/** Иконка сайта: своя у вкладки, иначе — из кэша Chrome; не загрузилась — значок «глобус». */
+function favImg(url, pageUrl) {
+  const src = url || (pageUrl && /^https?:/.test(pageUrl) ? siteFav(pageUrl) : "");
+  if (src) return `<img class="fav-img" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   return icon("globe", 18);
 }
 
@@ -153,11 +164,13 @@ async function reloadItems() {
 }
 
 async function reloadTabs() {
-  const me = await chrome.tabs.getCurrent();
+  const me = PANEL ? null : await chrome.tabs.getCurrent();
   st.myTabId = me && me.id;
-  const q = st.scope === "window" && me ? { windowId: me.windowId } : {};
+  if (st.myWindowId == null) st.myWindowId = me ? me.windowId : (await chrome.windows.getCurrent()).id;
+  const q = st.scope === "window" ? { windowId: st.myWindowId } : {};
   st.tabs = await chrome.tabs.query(q);
-  const live = new Set(st.tabs.map((t) => t.id));
+  // выбор держим только на тех, что ещё можно собрать (вкладка могла закрыться или стать текущей)
+  const live = new Set(st.tabs.filter((t) => selectable(t)).map((t) => t.id));
   for (const id of st.openSel) if (!live.has(id)) st.openSel.delete(id);
 }
 
@@ -167,7 +180,8 @@ function tabState(t) {
   if (t.id === st.myTabId) return "self";
   const u = untouchable(t, EXT);
   if (u) return u;
-  if (t.id === st.fromTab) return "current";
+  // в панели «текущая» — та, что открыта рядом с панелью; во вкладке — с которой открыли сборщик
+  if (PANEL ? t.active && t.windowId === st.myWindowId : t.id === st.fromTab) return "current";
   return "";
 }
 
@@ -228,9 +242,15 @@ function renderOpen() {
               } catch (e) {
                 /* как есть */
               }
+              const key = normalizeUrl(t.url);
+              // в плитках — снимок страницы (если вы на неё заходили) или крупная иконка сайта
+              const thumb = st.shotKeys.has(key)
+                ? `<span class="r-thumb shot"><img class="cover" data-shot="${esc(key)}" alt="" /></span>`
+                : `<span class="r-thumb"><span class="fav fav-big">${favImg(t.favIconUrl, t.url)}</span></span>`;
               return `<label class="row${s ? " off" : ""}" data-tab="${t.id}">
-                <span class="chk"><input type="checkbox" ${st.openSel.has(t.id) ? "checked" : ""} ${s ? "disabled" : ""} /><span class="box"></span></span>
-                <span class="fav">${favImg(t.favIconUrl)}</span>
+                ${thumb}
+                <span class="chk"><input type="checkbox" ${st.openSel.has(t.id) ? "checked" : ""} ${s ? "disabled" : ""} aria-label="Выбрать вкладку" /><span class="box"></span></span>
+                <span class="fav">${favImg(t.favIconUrl, t.url)}</span>
                 <span class="r-text"><span class="r-title">${hl(t.title || t.url, st.q)}</span><span class="r-url">${hl(path, st.q)}</span></span>
                 <span class="tags">${tags}</span>
               </label>`;
@@ -240,16 +260,21 @@ function renderOpen() {
       return `<section class="group${isOpen ? " open" : ""}" data-site="${esc(site)}">
         <div class="g-head" role="button" aria-expanded="${isOpen}">
           <span class="chk g-chk"><input type="checkbox" ${pick.length && nSel === pick.length ? "checked" : ""} ${pick.length ? "" : "disabled"} data-ind="${nSel > 0 && nSel < pick.length ? 1 : 0}" aria-label="Выбрать все вкладки ${esc(site)}" /><span class="box"></span></span>
-          <span class="fav">${favImg((tabs.find((t) => t.favIconUrl) || {}).favIconUrl)}</span>
-          <span class="g-name"><span class="g-title">${esc(site || "без адреса")}</span>${kindsText ? `<span class="g-kinds">${esc(kindsText)}</span>` : ""}</span>
-          <span class="g-count">${nSel ? `${nSel} из ${pick.length}` : tabs.length}</span>
+          <span class="fav">${favImg((tabs.find((t) => t.favIconUrl) || {}).favIconUrl, tabs[0].url)}</span>
+          <span class="g-name"><span class="g-title">${esc(hostLabel(site))}</span>${kindsText ? `<span class="g-kinds">${esc(kindsText)}</span>` : ""}</span>
+          <span class="g-count">${nSel ? `${nSel} из ${pick.length}` : tabs.length}<span class="g-count-w"> ${nSel ? "" : plural(tabs.length, "вкладка", "вкладки", "вкладок")}</span></span>
           <span class="chev">${icon("chevron", 20)}</span>
+          ${isOpen ? "" : `<span class="g-list">${tabs
+            .slice(0, 3)
+            .map((t) => `<span>${esc(t.title || t.url)}</span>`)
+            .join("")}${tabs.length > 3 ? `<span class="g-more">и ещё ${tabs.length - 3}</span>` : ""}</span>`}
         </div>
         <div class="g-rows">${rows}</div>
       </section>`;
     })
     .join("");
   list.querySelectorAll('input[data-ind="1"]').forEach((i) => (i.indeterminate = true));
+  fillShots(list);
 
   const sel = st.openSel.size;
   const all = $("open-all");
@@ -329,7 +354,7 @@ function bindOpen() {
     const extra = res.merged ? ` (${res.merged} уже были в списке)` : "";
     toast(`Собрано: ${nTabs(tabs.length)}${extra}`, async () => {
       // «Вернуть»: открыть вкладки обратно (усыплёнными) и убрать только что добавленные записи
-      await chrome.runtime.sendMessage({ type: "open", items: tabs.map((t) => ({ url: t.url })), lazy: true, background: true });
+      await chrome.runtime.sendMessage({ type: "open", items: tabs.map((t) => ({ url: t.url })), lazy: true, windowId: st.myWindowId });
       await removeItems(res.ids);
       await reloadItems();
       await reloadTabs();
@@ -340,12 +365,15 @@ function bindOpen() {
 
   $("sleep-btn").addEventListener("click", async () => {
     const tabs = st.tabs.filter((t) => st.openSel.has(t.id) && selectable(t));
-    const n = await sleepTabs(tabs);
+    const res = await sleepTabs(tabs);
     st.openSel.clear();
     await reloadTabs();
     renderOpen();
-    const skipped = tabs.length - n;
-    toast(`Усыплено: ${nTabs(n)}${skipped ? `. ${skipped} — уже спали или активные в своих окнах` : ""}`);
+    const why = [
+      res.drafts ? `${res.drafts} — с недописанным текстом` : "",
+      res.audible ? `${res.audible} — со звуком` : "",
+    ].filter(Boolean);
+    toast(`Усыплено: ${nTabs(res.n)}${why.length ? `. Не тронуты: ${why.join(", ")}` : ""}`);
   });
 }
 
@@ -396,8 +424,10 @@ function renderSide() {
   }
   if (sites.size) h += `<div class="side-h"><span>Сайты</span></div>`;
   for (const [site, s] of [...sites.entries()].sort((a, b) => b[1].n - a[1].n)) {
-    const lead = `<span class="fav">${favImg(s.sample.favicon || siteFav(s.sample.url))}</span>`;
-    h += navItem({ type: "site", site }, siteLabel(s.sample) || site, s.n, lead);
+    const lead = `<span class="fav">${favImg(s.sample.favicon, s.sample.url)}</span>`;
+    // известные сайты — по имени (Shikimori), остальные — по адресу: «Тестовый блог» на трёх хостах не сольётся
+    const label = s.sample.provider && s.sample.provider !== "page" ? siteLabel(s.sample) : hostLabel(site);
+    h += navItem({ type: "site", site }, label, s.n, lead);
     if (st.filter.type === "site" && st.filter.site === site && s.kinds.size > 1) {
       for (const [kind, n] of [...s.kinds.entries()].sort((a, b) => b[1] - a[1])) {
         const k = KINDS[kind] || KINDS.page;
@@ -483,7 +513,7 @@ function selectedItems() {
 
 async function openItems(items) {
   if (items.length >= 20 && !(await confirmDlg(`Открыть ${nLinksAcc(items.length)}?`, "Откроются в новых вкладках справа; все, кроме первой, — усыплёнными, чтобы не грузить компьютер.", "Открыть"))) return;
-  await chrome.runtime.sendMessage({ type: "open", items: items.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true });
+  await chrome.runtime.sendMessage({ type: "open", items: items.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId });
 }
 
 async function deleteItems(ids) {
@@ -662,7 +692,7 @@ function onTabsChanged() {
 
 let itemsTimer = null;
 chrome.storage.onChanged.addListener((ch, area) => {
-  if (area !== "local" || !(ch.items || ch.folders)) return;
+  if (area !== "local" || !(ch.folders || Object.keys(ch).some(isItemKey))) return;
   clearTimeout(itemsTimer);
   itemsTimer = setTimeout(async () => {
     await reloadItems();
@@ -692,6 +722,7 @@ async function init() {
   }
   await reloadItems();
   applyTheme(st.settings.theme || "auto");
+  applyScale(scaleOf(st.settings));
   await reloadTabs();
   await refreshShots();
 
@@ -726,6 +757,18 @@ async function init() {
       }
     }
   });
+  // панель ↔ вкладка
+  $("to-tab").addEventListener("click", async () => {
+    await chrome.runtime.sendMessage({ type: "open-app", view: st.view, windowId: st.myWindowId });
+    window.close(); // боковую панель закрываем — сборщик теперь во вкладке
+  });
+  $("to-panel").addEventListener("click", async () => {
+    // открыть панель можно только в ответ на щелчок — делаем это сразу, без ожиданий
+    chrome.sidePanel.open({ windowId: st.myWindowId }).then(
+      () => setTimeout(() => window.close(), 300),
+      () => toast("Не получилось открыть боковую панель")
+    );
+  });
   $("settings-btn").addEventListener("click", () =>
     openSettings(async () => {
       await reloadItems();
@@ -735,6 +778,25 @@ async function init() {
 
   bindOpen();
   bindLib();
+  st.layout = { open: st.settings.layoutOpen || "tiles", lib: st.settings.layoutLib || "tiles" };
+  applyLayout();
+  document.querySelectorAll("[data-layout]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      st.layout[b.dataset.for] = b.dataset.layout;
+      applyLayout();
+      render();
+      await saveSettings({ [b.dataset.for === "open" ? "layoutOpen" : "layoutLib"]: b.dataset.layout });
+    })
+  );
+  // иконка сайта не загрузилась — значок «глобус» вместо пустого квадрата
+  document.addEventListener(
+    "error",
+    (e) => {
+      const img = e.target;
+      if (img.tagName === "IMG" && (img.classList.contains("fav-img") || img.classList.contains("favimg"))) img.replaceWith(document.createRange().createContextualFragment(icon("globe", 18)));
+    },
+    true
+  );
   bindPeek($("lib-list"), ".card", (c) => {
     const it = st.items.find((x) => x.id === c.dataset.id);
     if (!it) return null;
@@ -784,7 +846,7 @@ async function init() {
     },
     { passive: false }
   );
-  for (const ev of ["onCreated", "onRemoved", "onUpdated", "onMoved", "onAttached", "onDetached", "onReplaced"]) chrome.tabs[ev].addListener(onTabsChanged);
+  for (const ev of ["onCreated", "onRemoved", "onUpdated", "onMoved", "onAttached", "onDetached", "onReplaced", "onActivated"]) chrome.tabs[ev].addListener(onTabsChanged);
   onEnrichState((left) => {
     st.enrichLeft = left;
     const line = $("enrich-line");

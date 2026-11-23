@@ -23,11 +23,23 @@ async function openApp(view, fromTab) {
 
 chrome.action.onClicked.addListener((tab) => openApp("", tab));
 
+// Значок открывает боковую панель (как у «Сводки комментариев YouTube») или вкладку — по настройке.
+async function iconBehavior() {
+  const { settings } = await chrome.storage.local.get("settings");
+  const panel = !settings || settings.iconOpens !== "tab";
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: panel }).catch(() => {});
+}
+iconBehavior();
+chrome.storage.onChanged.addListener((ch, area) => {
+  if (area === "local" && ch.settings && (ch.settings.oldValue || {}).iconOpens !== (ch.settings.newValue || {}).iconOpens) iconBehavior();
+});
+
 function menus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({ id: "site", title: "Собрать вкладки этого сайта и закрыть", contexts: ["action"] });
     chrome.contextMenus.create({ id: "sleep", title: "Усыпить все вкладки окна, кроме текущей", contexts: ["action"] });
-    chrome.contextMenus.create({ id: "library", title: "Открыть собранные ссылки", contexts: ["action"] });
+    chrome.contextMenus.create({ id: "library", title: "Открыть собранные ссылки во вкладке", contexts: ["action"] });
+    chrome.contextMenus.create({ id: "panel", title: "Открыть в боковой панели", contexts: ["action"] });
   });
 }
 chrome.runtime.onInstalled.addListener(menus);
@@ -44,10 +56,11 @@ async function badge(text, tabId) {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "library") return openApp("library", tab);
+  if (info.menuItemId === "panel") return chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
   const all = await chrome.tabs.query({ windowId: tab.windowId });
   if (info.menuItemId === "sleep") {
-    const n = await sleepTabs(all.filter((t) => t.id !== tab.id && !untouchable(t, EXT)));
-    return badge(String(n), tab.id);
+    const res = await sleepTabs(all.filter((t) => t.id !== tab.id && !untouchable(t, EXT)));
+    return badge(String(res.n), tab.id);
   }
   if (info.menuItemId === "site") {
     const site = siteOf(tab.url);
@@ -91,20 +104,37 @@ function discardWhenReady(tabId) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg && msg.type === "open-app") {
+    (async () => {
+      const [active] = await chrome.tabs.query({ active: true, windowId: msg.windowId });
+      await chrome.storage.session.set({ fromTab: active ? active.id : null });
+      await openApp(msg.view === "library" ? "library" : "", active);
+      reply({ ok: true });
+    })();
+    return true;
+  }
   if (msg && msg.type === "open") {
     (async () => {
       let n = 0;
-      let index = sender.tab ? sender.tab.index + 1 : undefined; // справа от активной
+      // справа от активной вкладки: из вкладки сборщика — от неё, из боковой панели — от открытой рядом
+      let base = sender.tab;
+      if (!base && msg.windowId != null) [base] = await chrome.tabs.query({ active: true, windowId: msg.windowId });
+      let index = base ? base.index + 1 : undefined;
       for (const it of msg.items) {
         if (!/^(https?|file|ftp):/i.test(it.url || "")) continue; // javascript:, chrome:// и т.п. не открываем
         try {
           const t = await chrome.tabs.create({
             url: it.url,
             active: msg.items.length === 1,
-            windowId: sender.tab && sender.tab.windowId,
+            windowId: base && base.windowId,
             index: index === undefined ? undefined : index++,
           });
-          if (it.scrollY > 0) await rememberScroll(t.id, it.scrollY);
+          if (it.scrollY > 0) {
+            await rememberScroll(t.id, it.scrollY);
+            // быстрая страница могла загрузиться, пока запоминали, — тогда прокручиваем сразу
+            const now = await chrome.tabs.get(t.id).catch(() => null);
+            if (now && now.status === "complete") applyScroll(t.id);
+          }
           // все, кроме первой, — усыплёнными: загрузятся, когда вы на них перейдёте
           if (msg.lazy && msg.items.length > 1 && n >= 1) discardWhenReady(t.id);
           n++;
@@ -118,8 +148,11 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, change) => {
-  if (change.status !== "complete") return;
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === "complete") applyScroll(tabId);
+});
+
+async function applyScroll(tabId) {
   const y = await takeScroll(tabId);
   if (!y) return;
   chrome.scripting
@@ -133,7 +166,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, change) => {
       args: [y],
     })
     .catch(() => {});
-});
+}
 chrome.tabs.onRemoved.addListener((id) => takeScroll(id).catch(() => {}));
 
 // ---------------------------------------------------------------- снимки для предпросмотра
