@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType } from "../core/url.js";
 import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit } from "../core/format.js";
-import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch } from "../core/enrich.js";
+import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
+import { sendable } from "../core/bot.js";
 
 let ok = 0;
 let fail = 0;
@@ -87,6 +88,37 @@ t("обычные сайты и служебные", () => {
   assert.equal(kindFromOgType("article"), "article");
   assert.equal(kindFromOgType("video.movie"), "video");
   assert.equal(kindFromOgType("website"), "page");
+});
+
+t("дубли: разные страницы не сливаются (сбор закрывает вкладки-дубли)", () => {
+  assert.notEqual(normalizeUrl("https://mail.google.com/mail/u/0/#inbox/AAA"), normalizeUrl("https://mail.google.com/mail/u/0/#inbox/BBB"));
+  assert.notEqual(normalizeUrl("https://web.telegram.org/k/#@durov"), normalizeUrl("https://web.telegram.org/k/#@telegram"));
+  assert.notEqual(normalizeUrl("https://web.telegram.org/a/#-100123"), normalizeUrl("https://web.telegram.org/a/#-100456"));
+  assert.notEqual(normalizeUrl("https://bit.ly/AbC"), normalizeUrl("https://bit.ly/abc"));
+  assert.notEqual(normalizeUrl("https://example.com/#/page1"), normalizeUrl("https://example.com/#/page2"));
+  assert.notEqual(normalizeUrl("https://ru.wikipedia.org/wiki/MASH"), normalizeUrl("https://ru.wikipedia.org/wiki/Mash"));
+  assert.notEqual(normalizeUrl("https://www.youtube.com/channel/UCabc"), normalizeUrl("https://www.youtube.com/channel/UCABC"));
+  // а это — одна страница
+  assert.equal(normalizeUrl("https://www.example.com/a/#comments"), normalizeUrl("https://example.com/a"));
+  assert.equal(normalizeUrl("https://Example.COM/A?utm_source=x"), normalizeUrl("https://example.com/A"));
+  assert.equal(normalizeUrl("https://www.youtube.com/@Veritasium"), normalizeUrl("https://www.youtube.com/@veritasium"));
+});
+t("адрес Википедии с неэкранированным % не роняет страницу", () => {
+  const r = recognize("https://en.wikipedia.org/wiki/100%_cotton");
+  assert.equal(r.provider, "wikipedia");
+  assert.equal(r.ref.title, "100%_cotton");
+  assert.ok(normalizeUrl("https://en.wikipedia.org/wiki/100%_cotton"));
+});
+t("повторно не запрашиваем частные адреса и «опасные» страницы", () => {
+  assert.ok(safeToFetch("https://habr.com/ru/articles/1/"));
+  for (const u of ["http://localhost:3000/", "http://192.168.1.1/", "http://10.0.0.5/x", "https://router.local/", "https://site.ru/logout", "https://site.ru/unsubscribe?id=1", "https://site.ru/x?token=abc", "file:///C:/a.html"])
+    assert.ok(!safeToFetch(u), u);
+});
+t("в бота уходят только веб-адреса до 2048 символов", () => {
+  assert.ok(sendable({ url: "https://x.ru/a" }));
+  assert.ok(!sendable({ url: "file:///C:/a.html" }));
+  assert.ok(!sendable({ url: "ftp://x.ru/a" }));
+  assert.ok(!sendable({ url: "https://x.ru/" + "a".repeat(2100) }));
 });
 
 // ---------------------------------------------------------------- описания

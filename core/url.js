@@ -62,8 +62,11 @@ export function collectable(url) {
 }
 
 /**
- * Ключ для склейки дублей: без #якоря, меток отслеживания, www/m., хвостового «/»;
- * у известных сайтов — по id (shikimori.one/animes/52991-frieren и /animes/52991 — одно).
+ * Ключ для склейки дублей — осторожно, чтобы разные страницы не слились (сбор закрывает
+ * вкладки-дубли!): убираются только метки отслеживания, www/m., хвостовой «/» и простой
+ * якорь-закладка (#comments). Регистр пути и параметров сохраняется (bit.ly/AbC ≠ bit.ly/abc);
+ * якорь-маршрут (#inbox/AAA в почте, #@user в Telegram, #/page, #!, числа) — часть адреса.
+ * У известных сайтов — по id (shikimori.one/animes/52991-frieren и /animes/52991 — одно).
  */
 export function normalizeUrl(url) {
   const r = recognize(url);
@@ -75,7 +78,8 @@ export function normalizeUrl(url) {
     params.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     const q = params.length ? "?" + new URLSearchParams(params).toString() : "";
     const path = u.pathname.replace(/\/+$/, "") || "";
-    return `${u.hostname.replace(/^(www|m)\./, "")}${path}${q}`.toLowerCase();
+    const hash = u.hash && !/^#[A-Za-z][\w.:-]*$/.test(u.hash) ? u.hash : "";
+    return `${u.hostname.replace(/^(www|m)\./, "")}${u.port ? ":" + u.port : ""}${path}${q}${hash}`;
   } catch (e) {
     return url;
   }
@@ -158,7 +162,9 @@ export function recognize(url) {
       return { ...base, site: "youtube.com", ...kindInfo("playlist"), provider: "page", key: `youtube:list:${list}` };
     }
     if ((m = path.match(/^\/(@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)/))) {
-      return { ...base, site: "youtube.com", ...kindInfo("channel"), provider: "page", key: `youtube:${m[1].toLowerCase()}` };
+      // @имя — без учёта регистра, /channel/UC… — с учётом
+      const ch = m[1].startsWith("@") ? m[1].toLowerCase() : m[1];
+      return { ...base, site: "youtube.com", ...kindInfo("channel"), provider: "page", key: `youtube:${ch}` };
     }
     return base;
   }
@@ -194,7 +200,12 @@ export function recognize(url) {
   }
 
   if ((m = host.match(/^([a-z-]+)\.wikipedia\.org$/)) && path.startsWith("/wiki/")) {
-    const title = decodeURIComponent(path.slice(6));
+    let title = path.slice(6);
+    try {
+      title = decodeURIComponent(title);
+    } catch (e) {
+      /* «100%_cotton» — неэкранированный %, берём как есть */
+    }
     const service = /^(special|служебная|category|категория|file|файл|talk|обсуждение|help|справка|portal|портал|wikipedia|википедия|template|шаблон|user|участник)(_talk)?:/i;
     if (title && !service.test(title)) {
       return {
@@ -202,7 +213,7 @@ export function recognize(url) {
         ...kindInfo("wiki"),
         provider: "wikipedia",
         ref: { lang: m[1], title },
-        key: `wikipedia:${m[1]}:${title.replace(/ /g, "_")}`.toLowerCase(),
+        key: `wikipedia:${m[1]}:${title.replace(/ /g, "_")}`, // заголовки чувствительны к регистру
       };
     }
   }

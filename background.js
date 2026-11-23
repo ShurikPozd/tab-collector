@@ -32,6 +32,9 @@ function menus() {
 }
 chrome.runtime.onInstalled.addListener(menus);
 chrome.runtime.onStartup.addListener(menus);
+// старые снимки — сверх 3000 — убираем при запуске браузера и обновлении расширения
+chrome.runtime.onInstalled.addListener(() => pruneShots().catch(() => {}));
+chrome.runtime.onStartup.addListener(() => pruneShots().catch(() => {}));
 
 async function badge(text, tabId) {
   await chrome.action.setBadgeBackgroundColor({ color: "#6d5efc" });
@@ -56,37 +59,69 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 // Открыть ссылки из списка; у тех, что были прокручены, — вернуть место прокрутки.
-const pendingScroll = new Map();
+// Нужная прокрутка хранится в chrome.storage.session: усыплённая вкладка грузится, когда вы
+// на неё перейдёте (через минуты), а фон к тому времени успевает уснуть и потерять память.
+const SCROLL = "scroll";
+
+async function rememberScroll(tabId, y) {
+  const d = (await chrome.storage.session.get(SCROLL))[SCROLL] || {};
+  d[tabId] = y;
+  await chrome.storage.session.set({ [SCROLL]: d });
+}
+
+async function takeScroll(tabId) {
+  const d = (await chrome.storage.session.get(SCROLL))[SCROLL] || {};
+  if (!(tabId in d)) return 0;
+  const y = d[tabId];
+  delete d[tabId];
+  await chrome.storage.session.set({ [SCROLL]: d });
+  return y;
+}
+
+// усыпить только что открытую вкладку, когда у неё уже есть адрес (иначе останется пустой)
+function discardWhenReady(tabId) {
+  const done = () => chrome.tabs.onUpdated.removeListener(on);
+  const on = (id, change, tab) => {
+    if (id !== tabId || !(change.url || tab.url || tab.pendingUrl)) return;
+    done();
+    chrome.tabs.discard(tabId).catch(() => {});
+  };
+  chrome.tabs.onUpdated.addListener(on);
+  setTimeout(done, 15000);
+}
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg && msg.type === "open") {
     (async () => {
-      const opened = [];
-      let i = 0;
+      let n = 0;
+      let index = sender.tab ? sender.tab.index + 1 : undefined; // справа от активной
       for (const it of msg.items) {
-        const t = await chrome.tabs.create({
-          url: it.url,
-          active: msg.items.length === 1,
-          windowId: sender.tab && sender.tab.windowId,
-          index: sender.tab ? sender.tab.index + 1 + i++ : undefined,
-        });
-        if (it.scrollY > 0) pendingScroll.set(t.id, it.scrollY);
-        // после второй вкладки — сразу усыпляем (откроются при переходе), чтобы не грузить всё разом
-        if (msg.lazy && msg.items.length > 1 && opened.length >= 1) {
-          chrome.tabs.discard(t.id).catch(() => {});
+        if (!/^(https?|file|ftp):/i.test(it.url || "")) continue; // javascript:, chrome:// и т.п. не открываем
+        try {
+          const t = await chrome.tabs.create({
+            url: it.url,
+            active: msg.items.length === 1,
+            windowId: sender.tab && sender.tab.windowId,
+            index: index === undefined ? undefined : index++,
+          });
+          if (it.scrollY > 0) await rememberScroll(t.id, it.scrollY);
+          // все, кроме первой, — усыплёнными: загрузятся, когда вы на них перейдёте
+          if (msg.lazy && msg.items.length > 1 && n >= 1) discardWhenReady(t.id);
+          n++;
+        } catch (e) {
+          /* одна негодная ссылка не мешает открыть остальные */
         }
-        opened.push(t.id);
       }
-      reply({ ok: true, n: opened.length });
+      reply({ ok: true, n });
     })();
     return true;
   }
 });
 
-chrome.tabs.onUpdated.addListener((tabId, change) => {
-  if (change.status !== "complete" || !pendingScroll.has(tabId)) return;
-  const y = pendingScroll.get(tabId);
-  pendingScroll.delete(tabId);
+chrome.tabs.onUpdated.addListener(async (tabId, change) => {
+  if (change.status !== "complete") return;
+  const y = await takeScroll(tabId);
+  if (!y) return;
   chrome.scripting
     .executeScript({
       target: { tabId },
@@ -99,14 +134,15 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     })
     .catch(() => {});
 });
-chrome.tabs.onRemoved.addListener((id) => pendingScroll.delete(id));
+chrome.tabs.onRemoved.addListener((id) => takeScroll(id).catch(() => {}));
 
 // ---------------------------------------------------------------- снимки для предпросмотра
 // Когда вы переходите на вкладку (или она догрузилась на экране), снимаем видимую часть
 // и уменьшаем до 640 px. Спящие и фоновые вкладки снять нельзя — только то, что на экране.
 let shotTimer = null;
 let lastShot = 0;
-let shotsSince = 0;
+// банки, госуслуги, почта и входы — не снимаем
+const PRIVATE = /(^|\.)(bank|sber|sberbank|tinkoff|tbank|alfabank|vtb|raiffeisen|gazprombank|paypal|qiwi|yoomoney|gosuslugi|nalog|accounts\.google|login|auth|passport|id\.yandex)\b|^(mail|e\.mail|outlook|webmail)\./i;
 
 async function shotsOn() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -126,16 +162,19 @@ async function takeShot(tabId) {
     if (!tab.active || tab.incognito || tab.status !== "complete" || !collectable(tab.url) || tab.url.startsWith(EXT)) return;
     const win = await chrome.windows.get(tab.windowId);
     if (win.state === "minimized") return;
+    const host = new URL(tab.url).hostname;
+    if (PRIVATE.test(host)) return;
+    // страница с полем пароля (вход, оплата) — тоже не снимаем
+    const [probe] = await chrome.scripting.executeScript({ target: { tabId }, func: () => !!document.querySelector('input[type="password"]') }).catch(() => [null]);
+    if (!probe || probe.result) return;
     lastShot = Date.now();
     const data = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
     // пока снимали, вкладку могли переключить — проверяем, что сняли ту же страницу
     const again = await chrome.tabs.get(tabId);
     if (!again.active || again.url !== tab.url) return;
     await putShot(normalizeUrl(tab.url), await shrink(data));
-    if (++shotsSince >= 50) {
-      shotsSince = 0;
-      pruneShots().catch(() => {});
-    }
+    // фон засыпает и счётчики в памяти теряются — чистим случайно, в среднем раз в 50 снимков
+    if (Math.random() < 0.02) pruneShots().catch(() => {});
   } catch (e) {
     /* вкладку закрыли, окно скрыто или страницу снимать нельзя */
   }

@@ -42,7 +42,7 @@ export function makeItem(tab, grab = {}, now = Date.now()) {
     sentAt: null,
     sentCategory: "",
     // известные сайты — уточняем через API; остальные — если страница не отдала описания
-    enrich: known || !desc ? "pending" : "done",
+    enrich: (known || !desc) && /^https?:/.test(tab.url) ? "pending" : "done",
   };
 }
 
@@ -51,17 +51,18 @@ export async function load() {
   return { items: d.items || [], folders: d.folders || [], settings: d.settings || {} };
 }
 
-let chain = Promise.resolve();
-/** Последовательные изменения (без гонок между вызовами на одной странице). */
+/**
+ * Изменения по одному: прочитать → изменить → записать. Замок navigator.locks общий для
+ * фона и всех страниц расширения — иначе страница (уточнение описаний) и фон (сбор из меню
+ * значка) затирали бы записи друг друга.
+ */
 export function update(fn) {
-  const run = chain.then(async () => {
+  return navigator.locks.request("tc-store", async () => {
     const d = await load();
     const res = await fn(d);
     await area().set({ items: d.items, folders: d.folders, settings: d.settings });
     return res;
   });
-  chain = run.catch(() => {});
-  return run;
 }
 
 /** Добавить записи, склеивая дубли по nkey. Возвращает {added, merged}. */
@@ -75,10 +76,9 @@ export function addItems(newItems) {
       const old = byKey.get(it.nkey);
       if (old) {
         merged++;
-        // дубль: оставляем старую запись, дополняем пустые поля и поднимаем наверх
+        // дубль: оставляем старую запись на её месте, дополняем пустые поля
         for (const k of ["description", "image", "favicon", "siteName"]) if (!old[k] && it[k]) old[k] = it[k];
         if (it.scrollY) old.scrollY = it.scrollY;
-        old.addedAt = it.addedAt;
         continue;
       }
       byKey.set(it.nkey, it);
@@ -158,12 +158,28 @@ export function importData(data) {
     if (!data || !Array.isArray(data.items)) throw new Error("Это не копия списка вкладок");
     const keys = new Set(d.items.map((it) => it.nkey));
     const folderIds = new Set(d.folders.map((f) => f.id));
-    for (const f of data.folders || []) if (f && f.id && !folderIds.has(f.id)) d.folders.push(f);
+    for (const f of data.folders || []) {
+      if (!f || typeof f.id !== "string" || typeof f.name !== "string" || folderIds.has(f.id)) continue;
+      d.folders.push({ id: f.id.slice(0, 40), name: f.name.slice(0, 60) });
+      folderIds.add(f.id);
+    }
+    const ids = new Set(d.items.map((it) => it.id));
     let added = 0;
-    for (const it of data.items) {
-      if (!it || !it.url || keys.has(it.nkey || normalizeUrl(it.url))) continue;
-      d.items.push({ ...it, nkey: it.nkey || normalizeUrl(it.url), id: it.id || uid() });
-      keys.add(it.nkey);
+    for (const raw of data.items) {
+      // из файла берём только обычные адреса и пересобираем запись по полям — чужой HTML не пройдёт
+      if (!raw || typeof raw.url !== "string" || !/^https?:\/\//i.test(raw.url)) continue;
+      const key = normalizeUrl(raw.url);
+      if (keys.has(key)) continue;
+      const it = makeItem({ url: raw.url, title: String(raw.title || ""), favIconUrl: String(raw.favicon || "") }, {}, Number(raw.addedAt) || Date.now());
+      for (const k of ["title", "meta", "description", "siteName", "sentCategory"]) if (typeof raw[k] === "string" && raw[k]) it[k] = raw[k].slice(0, 600);
+      if (typeof raw.image === "string" && /^https:\/\//.test(raw.image)) it.image = raw.image;
+      if (raw.sentAt) it.sentAt = Number(raw.sentAt) || null;
+      if (typeof raw.folder === "string" && folderIds.has(raw.folder)) it.folder = raw.folder;
+      if (raw.enrich === "done") it.enrich = "done";
+      if (typeof raw.id === "string" && /^[\w-]{4,40}$/.test(raw.id) && !ids.has(raw.id)) it.id = raw.id;
+      ids.add(it.id);
+      keys.add(key);
+      d.items.push(it);
       added++;
     }
     return added;

@@ -188,11 +188,30 @@ async function getJSON(url, init = {}, timeout = 12000) {
   }
 }
 
+// Адреса, которые не запрашиваем повторно: локальные и частные сети, выход/отписка/токены
+// (повторный GET мог бы что-то сделать от вашего имени).
+export function safeToFetch(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch (e) {
+    return false;
+  }
+  if (!/^https?:$/.test(u.protocol)) return false;
+  const h = u.hostname;
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal") || h === "[::1]") return false;
+  if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  if (/logout|log-out|signout|sign-out|unsubscribe|confirm|verify|activate|delete|token=|code=|key=|auth=|session=/i.test(u.pathname + u.search)) return false;
+  return true;
+}
+
 async function pageMeta(url) {
+  if (!safeToFetch(url)) return { doc: null, meta: {} };
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 12000);
   try {
-    const r = await fetch(url, { credentials: "include", signal: ctl.signal, headers: { Accept: "text/html" } });
+    // без ваших куки: страницу запрашиваем как гость
+    const r = await fetch(url, { credentials: "omit", signal: ctl.signal, headers: { Accept: "text/html" } });
     if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
     const type = r.headers.get("content-type") || "";
     if (!/html/.test(type)) return { doc: null, meta: {} };

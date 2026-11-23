@@ -2,7 +2,7 @@
 
 import { hydrateIcons } from "./icons.js";
 import { itemText, listParts, linksWord, descLimit } from "../core/format.js";
-import { sendLinks, botSettings } from "../core/bot.js";
+import { sendLinks, botSettings, sendable } from "../core/bot.js";
 import { patchItems } from "../core/store.js";
 import { esc } from "./ui.js";
 
@@ -40,6 +40,10 @@ function syncDesc() {
 
 function preview() {
   const m = mode();
+  if (!items.length) {
+    $("send-preview").textContent = "";
+    return;
+  }
   $("list-title-wrap").hidden = m !== "list";
   syncDesc();
   const descMax = descLimit(m, descChoice(m));
@@ -98,11 +102,17 @@ function bind() {
 }
 
 async function go() {
-  const m = mode();
-  const s = await botSettings();
-  if (!s.token) return status("Сначала впишите секрет бота в настройках (значок справа вверху).", "err");
+  // кнопку выключаем сразу, до первого await: двойной щелчок не запустит вторую отправку
+  if (ctl) return;
   ctl = new AbortController();
   busy(true);
+  const m = mode();
+  const s = await botSettings();
+  if (!s.token) {
+    ctl = null;
+    busy(false);
+    return status("Сначала впишите секрет бота в настройках (значок справа вверху).", "err");
+  }
   status(m === "each" ? "Отправляю… бот сохраняет ссылки по одной, это может занять пару минут." : "Отправляю список…");
   const res = await sendLinks(items, m, {
     title: $("list-title").value.trim(),
@@ -112,17 +122,20 @@ async function go() {
       if (waiting) status(`Отправлено ${sent} из ${total}. Бот просит подождать — продолжу через ${waiting} с.`);
       else status(`Отправлено ${sent} из ${total}…`);
     },
+    // отмечаем «в Telegram» сразу после каждой принятой пачки: если закрыть страницу
+    // посередине, уже отправленное не уйдёт второй раз
+    onBatch: async (batch) => {
+      const now = Date.now();
+      const ok = [...batch].filter(([, r]) => r.status === "saved" || r.status === "exists");
+      const cat = new Map(ok.map(([id, r]) => [id, r.category || ""]));
+      if (ok.length) await patchItems([...cat.keys()], (it) => ({ sentAt: now, sentCategory: cat.get(it.id) }));
+      items = items.filter((it) => !cat.has(it.id)); // «Отправить» ещё раз — только оставшиеся
+      onDone();
+    },
   });
-  const stopped = ctl.signal.aborted;
   ctl = null;
   busy(false);
-
-  // отмечаем отправленные (и те, что уже были в архиве)
-  const now = Date.now();
-  const marks = [];
-  for (const [id, r] of res.results) if (r.status === "saved" || r.status === "exists") marks.push([id, r]);
-  for (const [id, r] of marks) await patchItems([id], { sentAt: now, sentCategory: r.category || "" });
-  onDone();
+  $("send-count").innerHTML = items.length ? `Осталось отправить: <b>${esc(linksWord(items.length))}</b>` : "Все выбранные ссылки отправлены";
 
   const parts = [];
   if (m === "each") {
@@ -130,14 +143,15 @@ async function go() {
     if (res.exists) parts.push(`уже были в архиве ${res.exists}`);
     if (res.failed) parts.push(`не получилось ${res.failed}`);
   } else if (res.saved) parts.push(`${linksWord(res.saved)} — ${res.posts > 1 ? `${res.posts} ${res.posts < 5 ? "поста" : "постов"}` : "одним постом"}`);
-  const summary = parts.length ? parts.join(", ") : "";
-  if (res.error) status([summary && `Готово частично — ${summary}.`, res.error].filter(Boolean).join(" "), "err");
-  else if (stopped) status(`Остановлено. ${summary ? summary[0].toUpperCase() + summary.slice(1) + "." : ""}`.trim());
+  if (res.skipped) parts.push(`пропущено ${res.skipped} (не веб-адреса или слишком длинные)`);
+  const summary = parts.join(", ");
+  if (res.stopped) status(`Остановлено.${summary ? ` ${summary[0].toUpperCase()}${summary.slice(1)}.` : ""} Остальные ссылки — в разделе «Не отправлены».`);
+  else if (res.error) status([summary && `Готово частично — ${summary}.`, res.error].filter(Boolean).join(" "), "err");
   else {
     const tail = m === "list" ? " Список уже в чате бота." : res.saved ? " Новые ссылки — в чате бота и в его папках." : " Бот ничего не дублировал.";
-    status(`Готово: ${summary}.${tail}`, "ok");
-    $("send-go").disabled = true;
+    status(`Готово: ${summary || "нечего отправлять"}.${tail}`, "ok");
   }
+  $("send-go").disabled = !items.filter(sendable).length;
 }
 
 export function openSend(selected, done) {

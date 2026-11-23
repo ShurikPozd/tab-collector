@@ -23,6 +23,11 @@ export function applyTheme(t) {
   document.querySelectorAll("[data-theme-set]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.themeSet === (t || "auto"))));
 }
 
+// секрет уходит в заголовке — только по https (http допустим для бота на своём компьютере)
+function okUrl(url) {
+  return /^https:\/\/[^\s/]+/.test(url) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url);
+}
+
 function hint(text, kind = "") {
   const el = $("set-status");
   el.textContent = text;
@@ -45,7 +50,7 @@ function bind() {
   });
   $("set-save").addEventListener("click", async () => {
     const url = $("set-url").value.trim().replace(/\/+$/, "");
-    if (url && !/^https?:\/\/[^\s]+$/.test(url)) return hint("Адрес бота должен начинаться с https://", "err");
+    if (url && !okUrl(url)) return hint("Адрес бота должен начинаться с https:// (http — только для localhost)", "err");
     await saveSettings({ baseUrl: url === DEFAULTS.baseUrl ? "" : url, token: $("set-token").value.trim() });
     hint("Сохранено.", "ok");
     onChange();
@@ -54,6 +59,12 @@ function bind() {
     const b = $("set-ping");
     b.disabled = true;
     b.classList.add("spin");
+    const url = $("set-url").value.trim().replace(/\/+$/, "");
+    if (url && !okUrl(url)) {
+      b.disabled = false;
+      b.classList.remove("spin");
+      return hint("Адрес бота должен начинаться с https:// (http — только для localhost)", "err");
+    }
     hint("Проверяю… если бот спал, он просыпается до минуты.");
     await saveSettings({ baseUrl: $("set-url").value.trim().replace(/\/+$/, "") === DEFAULTS.baseUrl ? "" : $("set-url").value.trim(), token: $("set-token").value.trim() });
     const r = await ping();

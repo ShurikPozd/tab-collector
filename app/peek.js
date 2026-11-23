@@ -51,7 +51,7 @@ async function show(target, data, x) {
   el.innerHTML = `
     ${poster ? media : wide ? `<div class="pk-media">${media}${shot ? '<span class="pk-badge">снимок страницы</span>' : ""}</div>` : ""}
     <div class="pk-body">
-      <div class="pk-kicker">${data.kindLabel ? `<span class="tag kind">${data.icon || ""} ${esc(data.kindLabel)}</span>` : ""}<span>${esc(data.site || "")}</span></div>
+      <div class="pk-kicker">${data.kindLabel ? `<span class="tag kind">${esc(data.icon || "")} ${esc(data.kindLabel)}</span>` : ""}<span>${esc(data.site || "")}</span></div>
       <div class="pk-title">${esc(data.title || data.url)}</div>
       ${data.meta ? `<div class="pk-meta">${esc(data.meta)}</div>` : ""}
       ${data.description ? `<div class="pk-desc">${esc(data.description)}</div>` : ""}
@@ -95,13 +95,23 @@ export function bindPeek(root, selector, describe) {
     hide();
     current = t;
     const x = e.clientX;
+    const id = t.dataset.id || t.dataset.tab;
     timer = setTimeout(() => {
-      const data = describe(t);
-      if (data) show(t, data, x);
+      // список могли перерисовать, пока ждали: берём живой элемент по тому же id
+      let el2 = t;
+      if (!t.isConnected) {
+        el2 = [...root.querySelectorAll(selector)].find((x) => (x.dataset.id || x.dataset.tab) === id);
+        if (!el2) return hide();
+        current = el2;
+      }
+      const data = describe(el2);
+      if (data) show(el2, data, x);
     }, DELAY);
   });
   root.addEventListener("mouseout", (e) => {
     const t = e.target.closest(selector);
     if (t && !t.contains(e.relatedTarget)) hide();
   });
+  // ушли со списка совсем (в том числе после перерисовки, когда mouseout не придёт)
+  root.addEventListener("mouseleave", hide);
 }

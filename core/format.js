@@ -137,6 +137,8 @@ export function botError(status, data) {
   if (status === 429 || code === "rate") return "Бот просит подождать: слишком много ссылок подряд.";
   if (code === "no_owner") return "Бот не знает владельца архива (OWNER_ID).";
   if (code === "tg_offline") return "Бот сейчас не подключён к Telegram — попробуйте позже.";
+  if (code === "tg_send") return "Telegram не принял сообщение — попробуйте ещё раз позже.";
+  if (status === 400 || code === "bad_request") return "Бот не принял ссылки: в них что-то не так. Попробуйте отправить меньше или другие.";
   if (status === 502 || status === 503) return "Бот просыпается или недоступен — попробуйте через минуту.";
   return (data && data.error) || `Ошибка бота (${status}).`;
 }

@@ -21,6 +21,7 @@ function readPage() {
     image: pick('meta[property="og:image"]'),
     siteName: pick('meta[property="og:site_name"]'),
     ogType: pick('meta[property="og:type"]'),
+    url: location.href,
     scrollY: window.scrollY,
   };
 }
@@ -40,6 +41,7 @@ async function grab(tab, timeout = 1500) {
 /** Вкладки, которые нельзя трогать: закреплённые, сама страница расширения, служебные. */
 export function untouchable(tab, extOrigin) {
   if (tab.pinned) return "pinned";
+  if (tab.incognito) return "system";
   if (!tab.url || tab.url.startsWith(extOrigin)) return "self";
   if (!collectable(tab.url)) return "system";
   return "";
@@ -54,7 +56,9 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
     while (queue.length) {
       const tab = queue.shift();
       const g = await grab(tab);
-      items.push({ order: tabs.indexOf(tab), item: makeItem(tab, g) });
+      // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы
+      const t = g.url && /^https?:/.test(g.url) ? { ...tab, url: g.url } : tab;
+      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g) });
       done++;
       onProgress && onProgress(done, tabs.length);
     }
@@ -76,11 +80,11 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   return res;
 }
 
-/** Выгрузить из памяти; активные вкладки Chrome выгрузить не даст — их пропускаем. */
+/** Выгрузить из памяти. Пропускаем активные (Chrome не даст) и со звуком (музыка, звонок). */
 export async function sleepTabs(tabs) {
   let n = 0;
   for (const t of tabs) {
-    if (t.active || t.discarded) continue;
+    if (t.active || t.discarded || t.audible) continue;
     try {
       if (await chrome.tabs.discard(t.id)) n++;
     } catch (e) {

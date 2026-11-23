@@ -56,12 +56,16 @@ function fillShots(root) {
 
 // ---------------------------------------------------------------- утилиты
 
+// подсветка ищется в исходном тексте, а не в экранированном («amp» не найдётся внутри &amp;)
 function hl(text, q) {
-  const t = esc(text);
-  if (!q) return t;
-  const words = q.split(/\s+/).filter((w) => w.length > 1).map((w) => esc(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  if (!words.length) return t;
-  return t.replace(new RegExp(`(${words.join("|")})`, "gi"), "<mark>$1</mark>");
+  const raw = String(text ?? "");
+  if (!q) return esc(raw);
+  const words = q.split(/\s+/).filter((w) => w.length > 1).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!words.length) return esc(raw);
+  return raw
+    .split(new RegExp(`(${words.join("|")})`, "gi"))
+    .map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part)))
+    .join("");
 }
 
 function matches(q, ...fields) {
@@ -255,8 +259,8 @@ function renderOpen() {
   $("open-summary").innerHTML = sel
     ? `Выбрано <b>${sel}</b> из ${total}`
     : `${esc(nTabs(total))} на ${esc(nSites(groups.length))}`;
-  $("collect-btn").disabled = !sel;
-  $("sleep-btn").disabled = !sel;
+  $("collect-btn").disabled = !sel || !!st.collecting;
+  $("sleep-btn").disabled = !sel || !!st.collecting;
 }
 
 function visibleSelectable() {
@@ -304,12 +308,20 @@ function bindOpen() {
 
   $("collect-btn").addEventListener("click", async () => {
     const tabs = st.tabs.filter((t) => st.openSel.has(t.id) && selectable(t));
-    if (!tabs.length) return;
-    const btn = $("collect-btn");
-    btn.disabled = true;
-    $("sleep-btn").disabled = true;
-    const res = await collectTabs(tabs, { onProgress: (d, n) => progress(d / n) });
-    progress(null);
+    if (!tabs.length || st.collecting) return;
+    st.collecting = true;
+    renderOpen();
+    let res;
+    try {
+      res = await collectTabs(tabs, { onProgress: (d, n) => progress(d / n) });
+    } catch (e) {
+      toast("Не получилось собрать вкладки — они остались открытыми.");
+      return;
+    } finally {
+      st.collecting = false;
+      progress(null);
+      renderOpen();
+    }
     st.openSel.clear();
     await reloadItems();
     await reloadTabs();
@@ -409,11 +421,11 @@ function card(it) {
     it.sentAt ? `<span class="c-sent">✓ в Telegram${it.sentCategory ? ` · ${esc(it.sentCategory)}` : ""}</span>` : "",
     it.enrich === "pending" ? `<span class="c-pending">уточняю описание…</span>` : "",
   ].join("");
-  return `<article class="card${st.libSel.has(it.id) ? " sel" : ""}" data-id="${it.id}">
+  return `<article class="card${st.libSel.has(it.id) ? " sel" : ""}" data-id="${esc(it.id)}">
     <label class="chk"><input type="checkbox" ${st.libSel.has(it.id) ? "checked" : ""} aria-label="Выбрать" /><span class="box"></span></label>
     ${thumb}
     <div class="c-body">
-      <div class="c-kicker"><span class="tag kind">${it.icon} ${esc(it.kindLabel)}</span><span>${esc(siteLabel(it))}</span></div>
+      <div class="c-kicker"><span class="tag kind">${esc(it.icon)} ${esc(it.kindLabel)}</span><span>${esc(siteLabel(it))}</span></div>
       <a class="c-title" href="${esc(it.url)}" data-open>${hl(it.title || it.url, st.q)}</a>
       ${it.meta ? `<div class="c-meta">${hl(it.meta, st.q)}</div>` : ""}
       ${it.description ? `<div class="c-desc">${hl(it.description, st.q)}</div>` : ""}
@@ -470,12 +482,14 @@ function selectedItems() {
 }
 
 async function openItems(items) {
+  if (items.length >= 20 && !(await confirmDlg(`Открыть ${nLinksAcc(items.length)}?`, "Откроются в новых вкладках справа; все, кроме первой, — усыплёнными, чтобы не грузить компьютер.", "Открыть"))) return;
   await chrome.runtime.sendMessage({ type: "open", items: items.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true });
 }
 
 async function deleteItems(ids) {
   const removed = await removeItems(ids);
   ids.forEach((id) => st.libSel.delete(id));
+  if (!removed.length) return; // повторный щелчок: прежнее «Вернуть» не затираем
   await reloadItems();
   renderLib();
   toast(`Убрано из списка: ${nLinksAcc(removed.length)}`, async () => {
@@ -492,7 +506,7 @@ function closeMenu() {
 function showFolderMenu(anchor) {
   const menu = $("folder-menu");
   menu.innerHTML =
-    st.folders.map((f) => `<button type="button" data-folder="${f.id}">${icon("folder", 18)}<span>${esc(f.name)}</span></button>`).join("") +
+    st.folders.map((f) => `<button type="button" data-folder="${esc(f.id)}">${icon("folder", 18)}<span>${esc(f.name)}</span></button>`).join("") +
     (st.folders.length ? "<hr />" : "") +
     `<button type="button" data-folder="">${icon("close", 18)}<span>Убрать из папки</span></button>
      <button type="button" data-folder="new">${icon("folderPlus", 18)}<span>Новая папка…</span></button>`;
@@ -521,6 +535,7 @@ function bindLib() {
     if (!b) return;
     st.filter = JSON.parse(b.dataset.f);
     st.shown = PAGE;
+    st.libSel.clear(); // действия — только над тем, что видно
     renderLib();
   });
   $("folder-rename").addEventListener("click", async () => {
@@ -652,7 +667,17 @@ chrome.storage.onChanged.addListener((ch, area) => {
   itemsTimer = setTimeout(async () => {
     await reloadItems();
     renderLib();
+    // ссылки, добавленные меню значка или из копии, тоже уточняем
+    if (st.items.some((it) => it.enrich === "pending")) runEnrich();
   }, 150);
+});
+
+// значок нажали с другой вкладки, когда сборщик уже открыт: «текущая» — новая
+chrome.storage.session.onChanged.addListener(async (ch) => {
+  if (!ch.fromTab) return;
+  st.fromTab = ch.fromTab.newValue ?? null;
+  if (st.fromTab != null) st.openSel.delete(st.fromTab);
+  renderOpen();
 });
 
 async function init() {
@@ -685,6 +710,7 @@ async function init() {
   q.addEventListener("input", () => {
     st.q = q.value.trim();
     st.shown = PAGE;
+    st.libSel.clear();
     renderOpen();
     renderLib();
   });
