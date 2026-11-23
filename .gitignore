@@ -1,0 +1,13 @@
+# секрет бота (EXT_SECRET) — только локально
+local-config.js
+.env
+*.pem
+*.key
+
+# временное
+.syntaxcheck.mjs
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+node_modules/

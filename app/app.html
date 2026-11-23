@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Сборщик вкладок</title>
+    <link rel="icon" href="../icons/icon32.png" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="theme-boot.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <span class="brand-icon" data-icon="logo" data-size="22"></span>
+        <span class="brand-name">Сборщик вкладок</span>
+      </div>
+      <nav class="views" role="tablist" aria-label="Разделы">
+        <button type="button" role="tab" data-view="open" aria-selected="true"><span data-icon="tabs"></span><span class="v-label">Открытые</span><span id="open-count" class="badge"></span></button>
+        <button type="button" role="tab" data-view="library" aria-selected="false"><span data-icon="list"></span><span class="v-label">Собранные</span><span id="lib-count" class="badge"></span></button>
+      </nav>
+      <label class="search">
+        <span class="search-icon" data-icon="search" data-size="20"></span>
+        <input id="q" type="search" autocomplete="off" spellcheck="false" placeholder="Поиск по названию, сайту, описанию" aria-label="Поиск" />
+        <kbd class="hint" title="Поиск — клавиша /">/</kbd>
+      </label>
+      <button id="settings-btn" type="button" class="icon-btn" title="Настройки: бот, тема, резервная копия" aria-label="Настройки"><span data-icon="settings" data-size="20"></span></button>
+      <div id="progress" class="progress" hidden><div class="progress-fill"></div></div>
+    </header>
+
+    <!-- ===================== Открытые вкладки ===================== -->
+    <main id="view-open" class="view">
+      <div class="bar">
+        <div class="seg" role="radiogroup" aria-label="Какие окна">
+          <button type="button" data-scope="all" aria-checked="true" role="radio">Все окна</button>
+          <button type="button" data-scope="window" aria-checked="false" role="radio">Это окно</button>
+        </div>
+        <label class="check-all"><input id="open-all" type="checkbox" /><span class="box"></span><span>Выбрать все</span></label>
+        <span id="open-summary" class="summary" role="status"></span>
+        <div class="bar-actions">
+          <button id="sleep-btn" type="button" class="ghost" disabled title="Выгрузить выбранные вкладки из памяти: они остаются в окне и загрузятся, когда вы на них перейдёте"><span data-icon="sleep"></span><span class="label">Усыпить</span></button>
+          <button id="collect-btn" type="button" class="primary" disabled title="Сохранить выбранные вкладки в список и закрыть их"><span data-icon="collect"></span><span class="label">Собрать и закрыть</span></button>
+        </div>
+      </div>
+      <p class="note">Закреплённые вкладки, служебные страницы Chrome и вкладка, с которой вы открыли сборщик, не трогаются.</p>
+      <div id="open-list" class="groups"></div>
+      <div id="open-empty" class="empty" hidden>
+        <span data-icon="tabs" data-size="40"></span>
+        <p class="empty-title">Здесь пусто</p>
+        <p class="empty-text">Открытых вкладок, которые можно собрать, нет.</p>
+      </div>
+    </main>
+
+    <!-- ===================== Собранные ===================== -->
+    <main id="view-library" class="view lib" hidden>
+      <aside class="side" aria-label="Разделы списка">
+        <nav id="side-nav" class="side-nav"></nav>
+      </aside>
+      <section class="lib-main">
+        <div class="bar">
+          <label class="check-all"><input id="lib-all" type="checkbox" /><span class="box"></span><span id="lib-all-label">Выбрать все</span></label>
+          <span id="lib-summary" class="summary" role="status"></span>
+          <span id="folder-tools" class="folder-tools" hidden>
+            <button id="folder-rename" type="button" class="link-btn">Переименовать папку</button>
+            <button id="folder-delete" type="button" class="link-btn">Удалить папку</button>
+          </span>
+          <div class="bar-actions">
+            <button id="open-btn" type="button" class="ghost" disabled title="Открыть выбранные во вкладках (кроме первой — усыплёнными)"><span data-icon="external"></span><span class="label">Открыть</span></button>
+            <button id="folder-btn" type="button" class="ghost" disabled aria-haspopup="menu" title="Положить выбранные в папку"><span data-icon="folder"></span><span class="label">В папку</span></button>
+            <button id="delete-btn" type="button" class="ghost" disabled title="Убрать выбранные из списка"><span data-icon="trash"></span><span class="label">Удалить</span></button>
+            <button id="send-btn" type="button" class="primary" disabled title="Отправить выбранные ссылки в Telegram-бота"><span data-icon="send"></span><span class="label">В Telegram</span></button>
+          </div>
+        </div>
+        <div id="enrich-line" class="enrich-line" hidden></div>
+        <div id="lib-list" class="cards"></div>
+        <button id="more-btn" type="button" class="ghost more" hidden></button>
+        <div id="lib-empty" class="empty" hidden>
+          <span data-icon="inbox" data-size="40"></span>
+          <p class="empty-title">Список пуст</p>
+          <p class="empty-text">Соберите вкладки на вкладке «Открытые» — они появятся здесь.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- меню «В папку» -->
+    <div id="folder-menu" class="menu" role="menu" hidden></div>
+
+    <!-- ===================== Отправка в Telegram ===================== -->
+    <dialog id="send-dlg" class="dlg" aria-labelledby="send-title">
+      <form method="dialog" class="dlg-body">
+        <header class="dlg-head">
+          <h2 id="send-title">Отправить в Telegram</h2>
+          <button type="button" class="icon-btn" data-close aria-label="Закрыть"><span data-icon="close" data-size="20"></span></button>
+        </header>
+        <p id="send-count" class="dlg-lead"></p>
+        <div class="modes" role="radiogroup" aria-label="Как отправить">
+          <label class="mode">
+            <input type="radio" name="mode" value="each" checked />
+            <span class="mode-title">Каждую отдельным постом</span>
+            <span class="mode-text">Бот разложит ссылки по своим папкам, как обычные посты. Уже сохранённые повторно не появятся.</span>
+          </label>
+          <label class="mode">
+            <input type="radio" name="mode" value="list" />
+            <span class="mode-title">Одним постом-списком</span>
+            <span class="mode-text">Все ссылки — одним сообщением в одну папку. Длинный список бот разделит на части.</span>
+          </label>
+        </div>
+        <label id="list-title-wrap" class="field" hidden>
+          <span class="field-label">Заголовок списка</span>
+          <input id="list-title" type="text" maxlength="120" placeholder="Например: Посмотреть зимой" />
+        </label>
+        <div class="field">
+          <span class="field-label">Как это будет выглядеть</span>
+          <pre id="send-preview" class="preview"></pre>
+        </div>
+        <div id="send-status" class="send-status" role="status" hidden></div>
+        <footer class="dlg-foot">
+          <button type="button" class="ghost" data-close>Отмена</button>
+          <button id="send-go" type="button" class="primary"><span data-icon="send"></span><span class="label">Отправить</span></button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- ===================== Настройки ===================== -->
+    <dialog id="settings-dlg" class="dlg" aria-labelledby="settings-title">
+      <form method="dialog" class="dlg-body" tabindex="-1">
+        <header class="dlg-head">
+          <h2 id="settings-title">Настройки</h2>
+          <button type="button" class="icon-btn" data-close aria-label="Закрыть"><span data-icon="close" data-size="20"></span></button>
+        </header>
+        <section class="set-group">
+          <h3>Тема</h3>
+          <div class="seg seg-wide" role="radiogroup" aria-label="Тема">
+            <button type="button" data-theme-set="auto" role="radio">Как в системе</button>
+            <button type="button" data-theme-set="light" role="radio">Светлая</button>
+            <button type="button" data-theme-set="dark" role="radio">Тёмная</button>
+          </div>
+        </section>
+        <section class="set-group">
+          <h3>Telegram-бот</h3>
+          <label class="field">
+            <span class="field-label">Адрес бота</span>
+            <input id="set-url" type="url" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span class="field-label">Секрет (EXT_SECRET)</span>
+            <span class="secret">
+              <input id="set-token" type="password" autocomplete="off" spellcheck="false" />
+              <button id="set-token-eye" type="button" class="icon-btn" title="Показать или скрыть" aria-label="Показать или скрыть секрет"><span data-icon="eye"></span></button>
+            </span>
+            <span id="set-token-hint" class="field-hint"></span>
+          </label>
+          <div class="set-row">
+            <button id="set-save" type="button" class="primary"><span data-icon="check"></span><span class="label">Сохранить</span></button>
+            <button id="set-ping" type="button" class="ghost"><span data-icon="refresh"></span><span class="label">Проверить связь</span></button>
+          </div>
+          <p id="set-status" class="field-hint" role="status"></p>
+        </section>
+        <section class="set-group">
+          <h3>Резервная копия списка</h3>
+          <p class="field-hint">Файл со всеми собранными ссылками и папками. Загрузка копии ничего не удаляет — только добавляет недостающее.</p>
+          <div class="set-row">
+            <button id="backup-save" type="button" class="ghost"><span data-icon="download"></span><span class="label">Сохранить копию</span></button>
+            <button id="backup-load" type="button" class="ghost"><span data-icon="upload"></span><span class="label">Загрузить копию</span></button>
+            <input id="backup-file" type="file" accept="application/json,.json" hidden />
+          </div>
+        </section>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" hidden><span id="toast-text"></span><button id="toast-undo" type="button" hidden><span data-icon="undo" data-size="16"></span>Вернуть</button></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
