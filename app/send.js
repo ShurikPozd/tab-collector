@@ -1,7 +1,7 @@
 // Окно «Отправить в Telegram»: выбор режима, предпросмотр, отправка с ходом и итогом.
 
 import { hydrateIcons } from "./icons.js";
-import { itemText, listParts, linksWord } from "../core/format.js";
+import { itemText, listParts, linksWord, descLimit } from "../core/format.js";
 import { sendLinks, botSettings } from "../core/bot.js";
 import { patchItems } from "../core/store.js";
 import { esc } from "./ui.js";
@@ -16,14 +16,38 @@ function mode() {
   return document.querySelector('#send-dlg input[name="mode"]:checked').value;
 }
 
+// подробность описания — запоминается отдельно для каждого режима
+const DESC_DEFAULT = { each: "full", list: "short" };
+function descChoice(m = mode()) {
+  try {
+    const v = localStorage.getItem(`tc:desc:${m}`);
+    if (v === "none" || v === "short" || (v === "full" && m === "each")) return v;
+  } catch (e) {
+    /* по умолчанию */
+  }
+  return DESC_DEFAULT[m];
+}
+
+function syncDesc() {
+  const m = mode();
+  const cur = descChoice(m);
+  document.querySelectorAll("[data-desc]").forEach((b) => {
+    b.setAttribute("aria-checked", String(b.dataset.desc === cur));
+    // в посте-списке бот всё равно показывает ~140 символов — «Полностью» там нет
+    b.hidden = m === "list" && b.dataset.desc === "full";
+  });
+}
+
 function preview() {
   const m = mode();
   $("list-title-wrap").hidden = m !== "list";
+  syncDesc();
+  const descMax = descLimit(m, descChoice(m));
   if (m === "each") {
-    const first = itemText(items[0]);
+    const first = itemText(items[0], { descMax });
     $("send-preview").textContent = items.length > 1 ? `${first}\n\n…и ещё ${items.length - 1} — каждая своим постом` : first;
   } else {
-    const parts = listParts(items, $("list-title").value.trim());
+    const parts = listParts(items, $("list-title").value.trim(), descMax);
     $("send-preview").textContent = parts[0] + (parts.length > 1 ? `\n\n…и ещё ${parts.length - 1} ${parts.length - 1 === 1 ? "часть" : "части"} (в Telegram сообщение — до 4096 символов)` : "");
   }
 }
@@ -38,7 +62,7 @@ function status(text, kind = "") {
 function busy(on) {
   $("send-go").disabled = on;
   $("send-go").classList.toggle("spin", on);
-  document.querySelectorAll('#send-dlg input[name="mode"], #list-title').forEach((i) => (i.disabled = on));
+  document.querySelectorAll('#send-dlg input[name="mode"], #list-title, [data-desc]').forEach((i) => (i.disabled = on));
   // во время отправки «Отмена» — останавливает отправку
   document.querySelector("#send-dlg .dlg-foot [data-close]").textContent = on ? "Остановить" : "Закрыть";
 }
@@ -48,6 +72,16 @@ function bind() {
   const dlg = $("send-dlg");
   dlg.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", preview));
   $("list-title").addEventListener("input", preview);
+  dlg.querySelectorAll("[data-desc]").forEach((b) =>
+    b.addEventListener("click", () => {
+      try {
+        localStorage.setItem(`tc:desc:${mode()}`, b.dataset.desc);
+      } catch (e) {
+        /* не критично */
+      }
+      preview();
+    })
+  );
   dlg.querySelectorAll("[data-close]").forEach((b) =>
     b.addEventListener("click", () => {
       if (ctl) return ctl.abort();
@@ -72,6 +106,7 @@ async function go() {
   status(m === "each" ? "Отправляю… бот сохраняет ссылки по одной, это может занять пару минут." : "Отправляю список…");
   const res = await sendLinks(items, m, {
     title: $("list-title").value.trim(),
+    desc: descChoice(m),
     signal: ctl.signal,
     onStep: ({ sent, total, waiting }) => {
       if (waiting) status(`Отправлено ${sent} из ${total}. Бот просит подождать — продолжу через ${waiting} с.`);

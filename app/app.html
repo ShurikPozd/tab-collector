@@ -104,6 +104,14 @@
             <span class="mode-text">Все ссылки — одним сообщением в одну папку. Длинный список бот разделит на части.</span>
           </label>
         </div>
+        <div class="field">
+          <span class="field-label">Описание</span>
+          <div class="seg seg-wide" role="radiogroup" aria-label="Насколько подробно описание">
+            <button type="button" role="radio" data-desc="none">Без описания</button>
+            <button type="button" role="radio" data-desc="short">Коротко</button>
+            <button type="button" role="radio" data-desc="full">Полностью</button>
+          </div>
+        </div>
         <label id="list-title-wrap" class="field" hidden>
           <span class="field-label">Заголовок списка</span>
           <input id="list-title" type="text" maxlength="120" placeholder="Например: Посмотреть зимой" />
@@ -154,6 +162,15 @@
             <button id="set-ping" type="button" class="ghost"><span data-icon="refresh"></span><span class="label">Проверить связь</span></button>
           </div>
           <p id="set-status" class="field-hint" role="status"></p>
+        </section>
+        <section class="set-group">
+          <h3>Предпросмотр</h3>
+          <label class="check-all switch-row"><input id="set-shots" type="checkbox" /><span class="box"></span><span>Делать снимки страниц, на которые вы переходите</span></label>
+          <p class="field-hint">Снимок видимой части страницы показывается при наведении на ссылку и в списке, если у страницы нет своей картинки. Хранится только в этом браузере. Спящие вкладки снять нельзя — снимок появится, когда вы на них перейдёте.</p>
+          <div class="set-row">
+            <button id="shots-clear" type="button" class="ghost"><span data-icon="trash"></span><span class="label">Удалить все снимки</span></button>
+            <span id="shots-count" class="field-hint"></span>
+          </div>
         </section>
         <section class="set-group">
           <h3>Резервная копия списка</h3>

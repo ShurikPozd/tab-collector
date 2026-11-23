@@ -76,7 +76,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Отправить ссылки. mode: "each" | "list". onStep({sent, total, waiting}) — для прогресса.
  * Возвращает { results: Map(id → {status, category, icon}), error, saved, exists, failed }.
  */
-export async function sendLinks(items, mode, { title = "", onStep, signal } = {}) {
+export async function sendLinks(items, mode, { title = "", desc, onStep, signal } = {}) {
   const s = await botSettings();
   const out = { results: new Map(), error: "", saved: 0, exists: 0, failed: 0, posts: 0 };
   if (!s.token) {
@@ -105,7 +105,7 @@ export async function sendLinks(items, mode, { title = "", onStep, signal } = {}
     done++;
     const partTitle = mode === "list" && total > 1 ? `${title || "Список ссылок"} (${done}/${total})` : title;
     onStep && onStep({ sent, total: items.length, waiting: 0 });
-    const r = await post("/api/save-links", payload(mode, part, partTitle), s);
+    const r = await post("/api/save-links", payload(mode, part, partTitle, desc), s);
     const retryAfter = Math.max(5, Number((r.data && r.data.retryAfter) || 0));
 
     // бот спит на Render или просит подождать до первой ссылки

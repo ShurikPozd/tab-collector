@@ -4,7 +4,7 @@
 //   settings — адрес бота, секрет, тема
 // Все записи — через update(): прочитать → изменить → записать одним set().
 
-import { normalizeUrl, recognize } from "./url.js";
+import { normalizeUrl, recognize, kindFromOgType, kindMeta } from "./url.js";
 
 const area = () => chrome.storage.local;
 
@@ -14,7 +14,9 @@ export function uid() {
 
 /** Новая запись из вкладки (tab) и того, что успели прочитать со страницы (grab). */
 export function makeItem(tab, grab = {}, now = Date.now()) {
-  const r = recognize(tab.url);
+  let r = recognize(tab.url);
+  // сайт без своего распознавания: тип — по og:type страницы (статья, видео, товар…)
+  if (r.kind === "page" && grab.ogType) r = { ...r, ...kindMeta(kindFromOgType(grab.ogType)) };
   const desc = (grab.description || "").trim();
   const known = r.provider && r.provider !== "page";
   return {

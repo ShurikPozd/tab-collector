@@ -4,7 +4,9 @@
 import { hydrateIcons, icon } from "./icons.js";
 import { load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
 import { collectTabs, sleepTabs, untouchable } from "../core/collect.js";
-import { recognize, siteOf, siteLabel, KINDS } from "../core/url.js";
+import { recognize, siteOf, siteLabel, normalizeUrl, KINDS } from "../core/url.js";
+import { hasShots } from "../core/shots.js";
+import { bindPeek, shotUrl, forgetShots } from "./peek.js";
 import { runEnrich, onEnrichState, retryFailed } from "./enricher.js";
 import { openSend } from "./send.js";
 import { openSettings, applyTheme } from "./settings.js";
@@ -30,7 +32,27 @@ const st = {
   q: "",
   shown: PAGE,
   enrichLeft: 0,
+  shotKeys: new Set(), // у каких ссылок есть снимок страницы
 };
+
+async function refreshShots() {
+  const keys = new Set(st.items.map((it) => it.nkey));
+  for (const t of st.tabs) keys.add(normalizeUrl(t.url));
+  try {
+    st.shotKeys = new Set(await hasShots([...keys]));
+  } catch (e) {
+    st.shotKeys = new Set();
+  }
+}
+
+/** Подставить снимки страниц в миниатюры (после отрисовки). */
+function fillShots(root) {
+  root.querySelectorAll("img[data-shot]").forEach(async (img) => {
+    const u = await shotUrl(img.dataset.shot);
+    if (u) img.src = u;
+    else img.closest(".thumb")?.classList.add("no-shot");
+  });
+}
 
 // ---------------------------------------------------------------- утилиты
 
@@ -378,7 +400,9 @@ function card(it) {
   const folder = it.folder && st.folders.find((f) => f.id === it.folder);
   const thumb = it.image
     ? `<span class="thumb${["anime", "manga", "ranobe", "character", "person"].includes(it.kind) ? " poster" : ""}"><img class="cover" src="${esc(it.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></span>`
-    : `<span class="thumb"><img class="favimg" src="${esc(it.favicon || siteFav(it.url))}" alt="" loading="lazy" /></span>`;
+    : st.shotKeys.has(it.nkey)
+      ? `<span class="thumb shot"><img class="cover" data-shot="${esc(it.nkey)}" alt="" /></span>`
+      : `<span class="thumb"><img class="favimg" src="${esc(it.favicon || siteFav(it.url))}" alt="" loading="lazy" /></span>`;
   const foot = [
     `<span>${esc(dateText(it.addedAt))}</span>`,
     folder ? `<span>${icon("folder", 14).replace("<svg", '<svg style="display:inline;vertical-align:-2px;margin-right:4px"')}${esc(folder.name)}</span>` : "",
@@ -407,6 +431,7 @@ function renderLib() {
   const vis = libVisible();
   $("lib-count").textContent = String(st.items.length || "");
   $("lib-list").innerHTML = vis.slice(0, st.shown).map(card).join("");
+  fillShots($("lib-list"));
   const more = $("more-btn");
   more.hidden = vis.length <= st.shown;
   more.textContent = `Показать ещё ${Math.min(PAGE, vis.length - st.shown)}`;
@@ -592,12 +617,21 @@ function bindLib() {
 
 // ---------------------------------------------------------------- общее
 
+// подсказка в поиске — под ширину поля, без обрезания на полуслове
+function placeholder() {
+  const q = $("q");
+  const w = q.clientWidth;
+  const full = st.view === "open" ? "Поиск по открытым вкладкам" : "Поиск по названию, сайту, описанию";
+  const mid = st.view === "open" ? "Поиск по вкладкам" : "Поиск по ссылкам";
+  q.placeholder = w > full.length * 9.5 ? full : w > mid.length * 9.5 ? mid : "Поиск";
+}
+
 function render() {
   for (const v of ["open", "library"]) {
     $(`view-${v}`).hidden = st.view !== v;
     document.querySelector(`[data-view="${v}"]`).setAttribute("aria-selected", String(st.view === v));
   }
-  $("q").placeholder = st.view === "open" ? "Поиск по открытым вкладкам" : "Поиск по названию, сайту, описанию";
+  placeholder();
   renderOpen();
   renderLib();
 }
@@ -634,6 +668,7 @@ async function init() {
   await reloadItems();
   applyTheme(st.settings.theme || "auto");
   await reloadTabs();
+  await refreshShots();
 
   document.querySelectorAll("[data-view]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -674,6 +709,55 @@ async function init() {
 
   bindOpen();
   bindLib();
+  bindPeek($("lib-list"), ".card", (c) => {
+    const it = st.items.find((x) => x.id === c.dataset.id);
+    if (!it) return null;
+    const folder = it.folder && st.folders.find((f) => f.id === it.folder);
+    return {
+      ...it,
+      site: siteLabel(it),
+      shotKey: st.shotKeys.has(it.nkey) ? it.nkey : "",
+      foot: [esc(dateText(it.addedAt)), folder ? esc(`папка «${folder.name}»`) : "", it.sentAt ? `<span class="c-sent">✓ в Telegram${it.sentCategory ? ` · ${esc(it.sentCategory)}` : ""}</span>` : ""]
+        .filter(Boolean)
+        .join(" · "),
+    };
+  });
+  bindPeek($("open-list"), ".row", (row) => {
+    const t = st.tabs.find((x) => x.id === Number(row.dataset.tab));
+    if (!t) return null;
+    const r = recognize(t.url);
+    const key = normalizeUrl(t.url);
+    return {
+      title: t.title,
+      url: t.url,
+      kind: r.kind,
+      kindLabel: r.kind !== "page" ? r.kindLabel : "",
+      icon: r.icon,
+      site: r.site,
+      shotKey: st.shotKeys.has(key) ? key : "",
+      description: st.shotKeys.has(key) ? "" : "Снимка этой вкладки пока нет: он появится, когда вы на неё перейдёте.",
+      foot: t.discarded ? "усыплена" : "",
+    };
+  });
+  // вернулись на страницу сборщика — могли появиться новые снимки
+  document.addEventListener("visibilitychange", async () => {
+    if (document.hidden) return;
+    forgetShots();
+    await refreshShots();
+    renderLib();
+  });
+  window.addEventListener("resize", placeholder);
+  // лента разделов на узком экране листается колесом мыши
+  document.querySelector(".side").addEventListener(
+    "wheel",
+    (e) => {
+      const el = e.currentTarget;
+      if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    },
+    { passive: false }
+  );
   for (const ev of ["onCreated", "onRemoved", "onUpdated", "onMoved", "onAttached", "onDetached", "onReplaced"]) chrome.tabs[ev].addListener(onTabsChanged);
   onEnrichState((left) => {
     st.enrichLeft = left;

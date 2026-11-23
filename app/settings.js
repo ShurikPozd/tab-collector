@@ -3,6 +3,9 @@
 import { load, saveSettings, exportData, importData } from "../core/store.js";
 import { botSettings, ping } from "../core/bot.js";
 import { DEFAULTS } from "../config.js";
+import { clearShots, countShots } from "../core/shots.js";
+import { forgetShots } from "./peek.js";
+import { confirmDlg } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let bound = false;
@@ -67,6 +70,14 @@ function bind() {
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   });
+  $("set-shots").addEventListener("change", (e) => saveSettings({ shots: e.target.checked }));
+  $("shots-clear").addEventListener("click", async () => {
+    if (!(await confirmDlg("Удалить все снимки?", "Снимки страниц исчезнут из предпросмотра. Сами ссылки останутся в списке.", "Удалить снимки"))) return;
+    await clearShots();
+    forgetShots();
+    await shotsCount();
+    onChange();
+  });
   $("backup-load").addEventListener("click", () => $("backup-file").click());
   $("backup-file").addEventListener("change", async (e) => {
     const f = e.target.files[0];
@@ -82,6 +93,12 @@ function bind() {
   });
 }
 
+async function shotsCount() {
+  const n = await countShots().catch(() => 0);
+  $("shots-count").textContent = n ? `Сейчас снимков: ${n}` : "Снимков пока нет";
+  $("shots-clear").disabled = !n;
+}
+
 export async function openSettings(changed) {
   if (!bound) bind();
   onChange = changed || (() => {});
@@ -94,6 +111,8 @@ export async function openSettings(changed) {
     ? "Сейчас используется секрет из файла local-config.js. Впишите сюда, чтобы заменить."
     : "Тот же секрет, что у «Сводки комментариев YouTube». Хранится только в этом браузере.";
   applyTheme(settings.theme || "auto");
+  $("set-shots").checked = settings.shots !== false;
+  await shotsCount();
   hint("");
   $("settings-dlg").showModal();
   // без рамки фокуса на «×» при открытии: фокус — на само окно

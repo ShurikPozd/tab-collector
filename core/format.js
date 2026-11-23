@@ -8,6 +8,13 @@ export const LIST_MAX = 100; // mode=list: ссылок в одном посте
 export const BODY_MAX = 60000; // бот принимает тело до 64 КБ (кириллица — 2 байта на букву)
 const LIST_DESC = 140;
 
+/** Насколько подробно описание: none — без него, short — ~140 символов, full — до 600 (только each). */
+export const DESC = { none: 0, short: LIST_DESC, full: 600 };
+export function descLimit(mode, desc) {
+  const n = DESC[desc] ?? (mode === "list" ? DESC.short : DESC.full);
+  return mode === "list" ? Math.min(n, LIST_DESC) : n;
+}
+
 const LIMITS = { url: 2048, site: 100, kind: 32, kindLabel: 40, icon: 8, title: 300, meta: 300, description: 600, image: 2048 };
 
 export function clip(s, n) {
@@ -21,12 +28,13 @@ export function shortUrl(url) {
   return String(url || "").replace(/^https?:\/\/(www\.)?/, "");
 }
 
-/** Строки одной ссылки (пустые опущены). short — для списка: описание укорочено. */
-export function itemLines(item, { short = false } = {}) {
+/** Строки одной ссылки (пустые опущены). short — для списка; descMax — предел описания (0 — без него). */
+export function itemLines(item, { short = false, descMax } = {}) {
   const head = [item.icon, [item.kindLabel, item.title || item.url].filter(Boolean).join(" · ")]
     .filter(Boolean)
     .join(" ");
-  const desc = short ? clip(item.description, LIST_DESC) : clip(item.description, LIMITS.description);
+  const max = descMax ?? (short ? LIST_DESC : LIMITS.description);
+  const desc = max ? clip(item.description, max) : "";
   return [head, clip(item.meta, LIMITS.meta), desc, item.url].filter((s) => s && String(s).trim());
 }
 
@@ -49,7 +57,7 @@ export function linksWord(n) {
 
 /** Пост-список — так же, как его соберёт бот (savelinks.list_parts): заголовок «🔗 …»,
  *  «N ссылок», ссылки через пустую строку; длинный — частями ≤4096 с «часть k/N». */
-export function listParts(items, title = "") {
+export function listParts(items, title = "", descMax = LIST_DESC) {
   const n = items.length;
   const name = title ? `🔗 ${clip(title, 120)}` : "🔗 Список ссылок";
   const header = (k, total) => (total === 1 ? `${name}\n${linksWord(n)}` : `${name} · часть ${k}/${total}\n${linksWord(n)}`);
@@ -58,7 +66,7 @@ export function listParts(items, title = "") {
   let cur = [];
   let size = 0;
   for (const it of items) {
-    const b = itemText(it, { short: true }).slice(0, TG_LIMIT - 200);
+    const b = itemText(it, { short: true, descMax }).slice(0, TG_LIMIT - 200);
     let add = b.length + (cur.length ? 2 : 0);
     if (cur.length && size + add > room) {
       groups.push(cur);
@@ -74,7 +82,7 @@ export function listParts(items, title = "") {
 }
 
 /** Одна ссылка в теле запроса — только поля контракта, обрезанные по лимитам. */
-export function payloadItem(item, mode = "each") {
+export function payloadItem(item, mode = "each", desc) {
   const out = {
     url: String(item.url).slice(0, LIMITS.url),
     site: clip(item.siteLabel || item.site, LIMITS.site),
@@ -84,14 +92,14 @@ export function payloadItem(item, mode = "each") {
     title: clip(item.title || item.url, LIMITS.title),
     meta: clip(item.meta, LIMITS.meta),
     // в списке бот всё равно показывает ~140 символов — не раздуваем запрос
-    description: clip(item.description, mode === "list" ? LIST_DESC : LIMITS.description),
+    description: descLimit(mode, desc) ? clip(item.description, descLimit(mode, desc)) : "",
   };
   if (mode === "each" && item.image && /^https:\/\//.test(item.image) && item.image.length <= LIMITS.image) out.image = item.image;
   return out;
 }
 
-export function payload(mode, items, title = "") {
-  const body = { mode, items: items.map((it) => payloadItem(it, mode)) };
+export function payload(mode, items, title = "", desc) {
+  const body = { mode, items: items.map((it) => payloadItem(it, mode, desc)) };
   if (mode === "list" && title) body.title = clip(title, 120);
   return body;
 }

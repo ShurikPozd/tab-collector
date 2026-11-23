@@ -1,7 +1,7 @@
 // Автопроверки чистых модулей (без Chrome): node tests/run.mjs
 import assert from "node:assert/strict";
 import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType } from "../core/url.js";
-import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize } from "../core/format.js";
+import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch } from "../core/enrich.js";
 
 let ok = 0;
@@ -162,6 +162,16 @@ t("пачки: each по 5, list влезает в 64 КБ", () => {
   assert.ok(parts.length > 1);
   assert.ok(parts.every((p) => bodySize(payload("list", p, "x".repeat(120))) <= BODY_MAX));
   assert.equal(parts.flat().length, 100);
+});
+t("подробность описания", () => {
+  assert.equal(descLimit("each", "none"), 0);
+  assert.equal(descLimit("each", "short"), 140);
+  assert.equal(descLimit("each", "full"), 600);
+  assert.equal(descLimit("list", "full"), 140);
+  assert.equal(payload("each", [frieren], "", "none").items[0].description, "");
+  assert.ok(payload("each", [frieren], "", "short").items[0].description.length <= 140);
+  assert.ok(!itemText(frieren, { descMax: 0 }).includes("Эльфийка"));
+  assert.ok(!listParts([frieren], "", 0)[0].includes("Эльфийка"));
 });
 t("ошибки бота — по-русски", () => {
   assert.match(botError(404, null), /Обновите бота/);

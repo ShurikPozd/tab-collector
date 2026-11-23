@@ -20,6 +20,7 @@ function readPage() {
     description: pick('meta[property="og:description"]', 'meta[name="description"]'),
     image: pick('meta[property="og:image"]'),
     siteName: pick('meta[property="og:site_name"]'),
+    ogType: pick('meta[property="og:type"]'),
     scrollY: window.scrollY,
   };
 }

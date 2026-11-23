@@ -2,7 +2,8 @@
 // быстрые действия без страницы, восстановление прокрутки у открытых из списка ссылок.
 
 import { collectTabs, sleepTabs, untouchable } from "./core/collect.js";
-import { siteOf } from "./core/url.js";
+import { siteOf, normalizeUrl, collectable } from "./core/url.js";
+import { putShot, shrink, pruneShots } from "./core/shots.js";
 
 const APP = chrome.runtime.getURL("app/app.html");
 const EXT = chrome.runtime.getURL("");
@@ -99,3 +100,48 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     .catch(() => {});
 });
 chrome.tabs.onRemoved.addListener((id) => pendingScroll.delete(id));
+
+// ---------------------------------------------------------------- снимки для предпросмотра
+// Когда вы переходите на вкладку (или она догрузилась на экране), снимаем видимую часть
+// и уменьшаем до 640 px. Спящие и фоновые вкладки снять нельзя — только то, что на экране.
+let shotTimer = null;
+let lastShot = 0;
+let shotsSince = 0;
+
+async function shotsOn() {
+  const { settings } = await chrome.storage.local.get("settings");
+  return !settings || settings.shots !== false;
+}
+
+function scheduleShot(tabId) {
+  clearTimeout(shotTimer);
+  // даём странице дорисоваться; не чаще ~1 снимка в секунду (лимит Chrome — 2 в секунду)
+  shotTimer = setTimeout(() => takeShot(tabId), Math.max(900, 1100 - (Date.now() - lastShot)));
+}
+
+async function takeShot(tabId) {
+  try {
+    if (!(await shotsOn())) return;
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.active || tab.incognito || tab.status !== "complete" || !collectable(tab.url) || tab.url.startsWith(EXT)) return;
+    const win = await chrome.windows.get(tab.windowId);
+    if (win.state === "minimized") return;
+    lastShot = Date.now();
+    const data = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 80 });
+    // пока снимали, вкладку могли переключить — проверяем, что сняли ту же страницу
+    const again = await chrome.tabs.get(tabId);
+    if (!again.active || again.url !== tab.url) return;
+    await putShot(normalizeUrl(tab.url), await shrink(data));
+    if (++shotsSince >= 50) {
+      shotsSince = 0;
+      pruneShots().catch(() => {});
+    }
+  } catch (e) {
+    /* вкладку закрыли, окно скрыто или страницу снимать нельзя */
+  }
+}
+
+chrome.tabs.onActivated.addListener(({ tabId }) => scheduleShot(tabId));
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (change.status === "complete" && tab.active) scheduleShot(tabId);
+});
