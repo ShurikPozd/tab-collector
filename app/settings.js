@@ -2,6 +2,7 @@
 
 import { load, loadSettings, saveSettings, exportData, importData } from "../core/store.js";
 import { botSettings, ping } from "../core/bot.js";
+import { linksWord } from "../core/format.js";
 import { DEFAULTS } from "../config.js";
 import { clearShots, countShots } from "../core/shots.js";
 import { forgetShots } from "./peek.js";
@@ -44,7 +45,7 @@ async function backupStatus(text, ok) {
   if (text) return (el.textContent = text);
   if (b.lastAt) {
     const d = new Date(b.lastAt);
-    el.textContent = `Последняя копия в Telegram: ${d.toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}${b.lastLinks != null ? ` · ${b.lastLinks} ссылок` : ""}.${b.lastError ? ` Последняя попытка не удалась: ${b.lastError}.` : ""}`;
+    el.textContent = `Последняя копия в Telegram: ${d.toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}${b.lastLinks != null ? ` · ${linksWord(b.lastLinks)}` : ""}.${b.lastError ? ` Последняя попытка не удалась: ${b.lastError}.` : ""}`;
   } else el.textContent = b.lastError ? `Копия ещё не отправлялась: ${b.lastError}.` : "Копия в Telegram ещё не отправлялась.";
 }
 

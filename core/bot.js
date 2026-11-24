@@ -128,11 +128,14 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
     const body = payload(mode, part, partTitle, desc);
     // сознательная повторная отправка уже отправленных — новый пост (бот иначе ответит «уже есть»);
     // повтор после сбоя (ссылки ещё не отмечены) — тот же ключ, и бот не создаст второй пост
-    // ключ — без номера части «(2/3)»: при повторе части могут перенумероваться
-    if (body.batchKey) body.batchKey = batchKey(body.items.map((x) => x.url), clip(title || "", 120));
-    // суффикс — по времени прошлой отправки, а не по текущему: если ответ бота потерялся,
-    // следующая попытка даст тот же ключ, и второго поста не будет
-    if (body.batchKey && part.every((it) => it.sentAt)) body.batchKey += `-r${Math.max(...part.map((it) => +it.sentAt || 0)).toString(36)}`;
+    // ключ — без номера части «(2/3)»: при повторе части могут перенумероваться.
+    // Ещё не отправленные ссылки — и без заголовка: после сбоя окно могли открыть заново
+    // с другим (пустым) заголовком, а это всё тот же список
+    const again = part.every((it) => it.sentAt);
+    if (body.batchKey) body.batchKey = batchKey(body.items.map((x) => x.url), again ? clip(title || "", 120) : "");
+    // сознательная повторная отправка — суффикс по времени прошлой отправки, а не по текущему:
+    // если ответ бота потерялся, следующая попытка даст тот же ключ, и второго поста не будет
+    if (body.batchKey && again) body.batchKey += `-r${Math.max(...part.map((it) => +it.sentAt || 0)).toString(36)}`;
     const r = await post("/api/save-links", body, s, undefined, signal);
     if (r.aborted || aborted()) break;
     const retryAfter = Math.max(5, Number((r.data && r.data.retryAfter) || 0));

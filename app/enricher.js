@@ -74,7 +74,7 @@ async function enrichLoop() {
           try {
             p = { ...(await fetchDetails(it)), enrich: "done" };
           } catch (e) {
-            p = { enrich: it.description ? "done" : "failed" }; // описание уже есть — не «без описания»
+            p = { enrich: "failed" }; // повторим позже; «без описания» считаются только записи без него
           }
           patches.set(it.id, p);
           left = Math.max(0, left - 1);

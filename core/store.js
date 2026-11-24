@@ -125,6 +125,7 @@ export async function migrateKeys() {
       for (const k of ["description", "image", "favicon", "siteName", "meta", "mark", "folder", "sentCategory"]) if (!old[k] && it[k]) old[k] = it[k];
       if ((it.sentAt || 0) > (old.sentAt || 0)) old.sentAt = it.sentAt;
       if (old.enrich === "pending" && it.enrich === "done" && it.description) old.enrich = "done";
+      if (old.enrich === "failed" && old.description) old.enrich = "done";
       n++;
       return false;
     });

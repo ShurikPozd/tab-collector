@@ -517,6 +517,7 @@ t("описания без разметки, даже заэкранирован
   // раскодированный «<Ctrl>» — обычный текст, не тег
   assert.equal(htmlText("Нажмите &lt;Ctrl&gt; и &lt;Enter&gt;"), "Нажмите <Ctrl> и <Enter>");
   assert.equal(htmlText("Love &lt;3"), "Love <3");
+  assert.equal(htmlText("&lt;dl&gt;&lt;dt&gt;Опыт&lt;/dt&gt;&lt;dd&gt;&lt;mark&gt;3 года&lt;/mark&gt;&lt;/dd&gt;&lt;/dl&gt;&lt;script&gt;x()&lt;/script&gt;"), "Опыт 3 года");
 });
 t("hh.ru без schema.org: заголовок со страницы", () => {
   const html = '<meta property="og:title" content="Вакансия Специалист в IT-отдел, работа в компании Х"><h1 data-qa="vacancy-title" class="x"><span>Специалист в IT-отдел</span></h1>';

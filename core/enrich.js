@@ -170,7 +170,11 @@ const stripTags = (s) =>
     .replace(/<\/?[a-z][^>]*>/gi, "");
 // после раскодирования «<Ctrl>» — уже обычный текст: убираем только настоящие теги
 const stripKnownTags = (s) =>
-  s.replace(BLOCK, " ").replace(/<\/?(span|b|i|u|s|strong|em|a|code|pre|small|sup|sub|font|img|hr)\b[^>]*>/gi, "");
+  s
+    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(BLOCK, " ")
+    .replace(/<\/?(dl|dt|dd|th|thead|tbody|tfoot|header|footer|figure|figcaption)\b[^>]*>/gi, " ")
+    .replace(/<\/?(span|b|i|u|s|strong|em|a|code|pre|small|sup|sub|font|img|hr|mark|del|ins|wbr|nobr|abbr|label|q|cite)\b[^>]*>/gi, "");
 
 /** HTML → чистый текст (описание вакансии и т.п.). Дважды: разметка бывает заэкранирована ещё раз. */
 export function htmlText(s) {

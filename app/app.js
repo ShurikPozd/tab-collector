@@ -5,6 +5,7 @@ import { hydrateIcons, icon } from "./icons.js";
 import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
 import { collectTabs, sleepTabs, untouchable, draftIn } from "../core/collect.js";
 import { findDuplicates } from "../core/dups.js";
+import { plural } from "../core/format.js";
 import { MARKS, MARK_ICON, MARK_NAV, markLabel } from "../core/marks.js";
 import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS, SITE_NAMES, providerForSite, siteTitle } from "../core/url.js";
 import { shotStamps } from "../core/shots.js";
@@ -249,14 +250,6 @@ function matches(q, ...fields) {
     .every((w) => hay.includes(w));
 }
 
-function plural(n, one, few, many) {
-  const a = Math.abs(n) % 100;
-  const b = a % 10;
-  if (a > 10 && a < 20) return many;
-  if (b > 1 && b < 5) return few;
-  if (b === 1) return one;
-  return many;
-}
 const nTabs = (n) => `${n} ${plural(n, "вкладка", "вкладки", "вкладок")}`;
 const nTabsAcc = (n) => `${n} ${plural(n, "вкладку", "вкладки", "вкладок")}`;
 const nLinks = (n) => `${n} ${plural(n, "ссылка", "ссылки", "ссылок")}`;
@@ -592,6 +585,7 @@ function bindOpen() {
     st.collecting = true;
     renderOpen();
     const closed = [];
+    const closing = new Set(); // закрытые и закрываемые прямо сейчас (воркеры идут параллельно)
     let skipped = 0;
     let unknown = 0;
     try {
@@ -612,11 +606,15 @@ function bindOpen() {
           // пока проверяли, на вкладку могли перейти или открыть в ней другую страницу
           const now = await chrome.tabs.get(t.id).catch(() => null);
           if (!now || now.active || now.pinned || now.audible || now.url !== t.url) continue;
-          // оставляемую копию могли закрыть, пока проверяли черновик, — тогда эту не трогаем
+          // оставляемую копию могли закрыть, пока проверяли черновик, — тогда эту не трогаем.
+          // Себя отмечаем ДО поиска копий: две копии не сочтут друг друга оставленными
           const key = normalizeUrl(t.url);
-          const gone = new Set(closed.map((c) => c.id).concat(t.id));
-          const twins = (await chrome.tabs.query({}).catch(() => [])).filter((x) => !gone.has(x.id) && !x.incognito && normalizeUrl(x.url || "") === key);
-          if (!twins.length) continue;
+          closing.add(t.id);
+          const twins = (await chrome.tabs.query({ windowType: "normal" }).catch(() => [])).filter((x) => !closing.has(x.id) && !x.incognito && normalizeUrl(x.url || "") === key);
+          if (!twins.length) {
+            closing.delete(t.id);
+            continue;
+          }
           try {
             await chrome.tabs.remove(t.id);
             closed.push(t);
@@ -858,7 +856,7 @@ function renderLib() {
   $("folder-tools").hidden = st.filter.type !== "folder";
 
   const line = $("enrich-line");
-  const failed = st.items.filter((it) => it.enrich === "failed").length;
+  const failed = st.items.filter((it) => it.enrich === "failed" && !it.description).length;
   if (st.enrichLeft) {
     line.hidden = false;
     line.textContent = `Уточняю описания у сайтов: осталось ${st.enrichLeft}`;

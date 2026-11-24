@@ -144,7 +144,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg && msg.type === "backup-soon") {
     // после крупного сбора — копия, если последняя была давно (больше часа назад)
-    backupDue(3600 * 1000).then((due) => due && sendBackup());
+    backupDue(3600 * 1000).then((due) => due && sendBackup()).catch(() => {});
     return false;
   }
   if (msg && msg.type === "schedule") {

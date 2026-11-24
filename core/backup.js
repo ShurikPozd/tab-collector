@@ -5,6 +5,7 @@
 
 import { exportData, loadSettings, update } from "./store.js";
 import { botSettings } from "./bot.js";
+import { linksWord } from "./format.js";
 
 export const DAY = 24 * 3600 * 1000;
 
@@ -53,7 +54,7 @@ async function sendBackupNow({ manual = false } = {}) {
   }
   if (r.ok) {
     await remember({ lastAt: Date.now(), lastLinks: data.items.length, lastError: "", lastTryAt: Date.now() });
-    return { ok: true, text: `Копия отправлена в Telegram: ${data.items.length} ссылок.` };
+    return { ok: true, text: `Копия отправлена в Telegram: ${linksWord(data.items.length)}.` };
   }
   let body = null;
   try {

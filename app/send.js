@@ -56,7 +56,7 @@ function preview() {
     $("send-preview").textContent = items.length > 1 ? `${first}\n\n…и ещё ${items.length - 1} — каждая своим постом` : first;
   } else {
     const parts = listParts(items, $("list-title").value.trim(), descMax);
-    $("send-preview").textContent = parts[0] + (parts.length > 1 ? `\n\n…и ещё ${parts.length - 1} ${parts.length - 1 === 1 ? "часть" : "части"} (в Telegram сообщение — до 4096 символов)` : "");
+    $("send-preview").textContent = parts[0] + (parts.length > 1 ? `\n\n…и ещё ${parts.length - 1} ${plural(parts.length - 1, "часть", "части", "частей")} (в Telegram сообщение — до 4096 символов)` : "");
   }
 }
 
