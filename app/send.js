@@ -77,6 +77,11 @@ function bind() {
   const dlg = $("send-dlg");
   dlg.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", preview));
   $("list-title").addEventListener("input", preview);
+  // Enter в поле заголовка — отправить (по умолчанию форма-диалог просто закрылась бы)
+  dlg.querySelector("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!ctl && !$("send-go").disabled) go();
+  });
   dlg.querySelectorAll("[data-desc]").forEach((b) =>
     b.addEventListener("click", () => {
       try {

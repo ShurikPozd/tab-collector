@@ -87,7 +87,7 @@ async function enrichLoop() {
       clearTimeout(timer);
       timer = null;
       await writing;
-      await flush(patches);
+      await flush(patches).catch(() => (writeFailed = true));
     }
   } finally {
     running = false;

@@ -80,7 +80,7 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
       if (check === "unknown") unchecked.add(tab.id);
       // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы
       const t = g.url && /^https?:/.test(g.url) ? { ...tab, url: g.url } : tab;
-      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g, startedAt, startedAt), draft: drafts.has(tab.id) });
+      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g, startedAt, startedAt), draft: drafts.has(tab.id), tabId: tab.id });
       done++;
       onProgress && onProgress(done, tabs.length);
     }
@@ -93,6 +93,20 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   res.unchecked = unchecked.size; // не успели проверить
   // закрываем только после того, как список записан: ничего не теряется
   if (close) {
+    // пока шёл сбор, вы могли перейти на одну из вкладок (и начать печатать) или она ушла на
+    // другую страницу — такие оставляем открытыми: сохранённая запись не про то, что в ней сейчас
+    const saved = new Map(items.map((x) => [x.tabId, x.item.url]));
+    const now = new Map((await chrome.tabs.query({})).map((t) => [t.id, t]));
+    for (const t of tabs) {
+      const cur = now.get(t.id);
+      if (cur && !drafts.has(t.id) && ((cur.active && !t.active) || (cur.url !== saved.get(t.id) && cur.url !== t.url))) {
+        drafts.add(t.id);
+        unchecked.add(t.id);
+      }
+    }
+    res.items = items.filter((x) => !drafts.has(x.tabId)).map((x) => x.item);
+    res.kept = drafts.size - unchecked.size;
+    res.unchecked = unchecked.size;
     const ids = tabs.map((t) => t.id).filter((id) => !drafts.has(id));
     for (let i = 0; i < ids.length; i += 50) {
       const part = ids.slice(i, i + 50);

@@ -277,7 +277,8 @@ export function kindMeta(kind) {
 /** Подпись сайта: «Shikimori», «Хабр» или хост. */
 export function siteLabel(item) {
   if (item.site === "file") return "Файлы на компьютере";
-  return (item.provider && SITE_NAMES[item.provider]) || item.siteName || item.site || "";
+  // известный сайт — его имя (как у группы и в меню), даже у страниц без распознавания (форум Shikimori)
+  return (item.provider && SITE_NAMES[item.provider]) || SITE_NAMES[providerForSite(item.site)] || item.siteName || item.site || "";
 }
 
 /** Известный сайт по хосту (shikimori.io → shikimori, ru.wikipedia.org → wikipedia) или null. */
