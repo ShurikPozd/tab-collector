@@ -126,7 +126,10 @@ async function go() {
     const before = items.length;
     items = items.filter((it) => fresh.has(it.id) && (fresh.get(it.id).sentAt || null) === (sentBefore.get(it.id) || null));
     if (before && !items.length) return { allSentElsewhere: true };
-    if (items.length < before) $("send-count").innerHTML = `Отправить: <b>${esc(linksWord(items.length))}</b> (остальные уже отправили или удалили в другом окне)`;
+    if (items.length < before) {
+      $("send-count").innerHTML = `Отправить: <b>${esc(linksWord(items.length))}</b> (остальные уже отправили или удалили в другом окне)`;
+      preview();
+    }
     return sendLinks(items, m, {
     title: $("list-title").value.trim(),
     desc: descChoice(m),

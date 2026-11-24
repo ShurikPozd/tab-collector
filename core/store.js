@@ -256,6 +256,7 @@ export function importData(data) {
       for (const k of ["title", "meta", "description", "siteName", "sentCategory"]) if (typeof raw[k] === "string" && raw[k]) it[k] = raw[k].slice(0, 600);
       if (typeof raw.image === "string" && /^https:\/\//.test(raw.image)) it.image = raw.image;
       if (raw.sentAt) it.sentAt = Number(raw.sentAt) || null;
+      if (Number(raw.batch) > 0) it.batch = Number(raw.batch); // «По сборам» после восстановления — как было
       if (typeof raw.folder === "string" && folderIds.has(raw.folder)) it.folder = raw.folder;
       if (raw.enrich === "done") it.enrich = "done";
       if (typeof raw.id === "string" && /^[\w-]{4,40}$/.test(raw.id) && !ids.has(raw.id)) it.id = raw.id;

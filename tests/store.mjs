@@ -107,5 +107,11 @@ await t("загрузка копии: только веб-адреса, без �
   assert.deepEqual(d.folders.map((f) => f.id), ["f1"]);
 });
 
+await t("копия сохраняет пометку сбора (batch)", async () => {
+  const n = await importData({ items: [{ url: "https://c.ru/1", title: "C", addedAt: 1000, batch: 1000 }], folders: [] });
+  assert.equal(n, 1);
+  assert.equal((await load()).items.find((i) => i.url === "https://c.ru/1").batch, 1000);
+});
+
 console.log(`${ok} OK, ${fail} FAIL (хранилище)`);
 process.exit(fail ? 1 : 0);

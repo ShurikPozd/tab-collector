@@ -77,7 +77,7 @@ async function enrichLoop() {
           patches.set(it.id, p);
           left = Math.max(0, left - 1);
           onState(left);
-          if (!timer) timer = setTimeout(() => ((timer = null), (writing = flush(patches))), 3000);
+          if (!timer) timer = setTimeout(() => ((timer = null), (writing = flush(patches).catch(() => {}))), 3000);
         }
       };
       // разные сайты идут параллельно, один и тот же — с паузами (см. polite в enrich.js)
@@ -88,6 +88,8 @@ async function enrichLoop() {
       await flush(patches);
     }
   } finally {
+    // недописанное (сбой записи) — снова можно уточнить, без перезагрузки страницы
+    for (const id of patches.keys()) seen.delete(id);
     running = false;
     left = 0;
     onState(0);
