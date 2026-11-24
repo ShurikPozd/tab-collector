@@ -3,10 +3,16 @@ import assert from "node:assert/strict";
 import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf, siteLabel, providerForSite, siteTitle } from "../core/url.js";
 import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit, clip } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
+import { anilibriaPatch, mangalibPatch, mangalibMetaPatch, webtoonPatch, rutubePatch, hhPagePatch, metaTags, jsonLd, decodeEntities, duration } from "../core/enrich.js";
 import { sendable } from "../core/bot.js";
 import { findDuplicates } from "../core/dups.js";
 import { markLabel } from "../core/marks.js";
 import { batchKey } from "../core/format.js";
+import { readFileSync } from "node:fs";
+
+// образцы настоящих ответов сайтов (снятые один раз, обрезанные) — тесты работают без сети
+const fixture = (f) => readFileSync(new URL(`./fixtures/${f}`, import.meta.url), "utf8");
+const fixtureJSON = (f) => JSON.parse(fixture(f));
 
 let ok = 0;
 let fail = 0;
@@ -218,6 +224,177 @@ t("jikan, anilist, github", () => {
   assert.equal(a.meta, "2023 · TV, 28 эп. · вышло · ★ 9.1 · adventure");
   const g = githubPatch("repo", { full_name: "yt-dlp/yt-dlp", stargazers_count: 120345, language: "Python", topics: ["youtube"], description: "A feature-rich downloader" });
   assert.equal(g.meta, "★ 120 тыс. · Python · youtube");
+});
+
+// ---------------------------------------------------------------- новые сайты: адреса
+t("AniLibria / AniLiberty: тайтл, старые адреса и зеркала склеиваются по коду", () => {
+  const r = recognize("https://aniliberty.top/anime/releases/toaru-anbu-no-item");
+  assert.equal(r.provider, "anilibria");
+  assert.equal(r.kind, "anime");
+  assert.deepEqual(r.ref, { alias: "toaru-anbu-no-item", api: "https://aniliberty.top" });
+  assert.equal(recognize("https://anilibria.top/anime/releases/toaru-anbu-no-item").ref.api, "https://anilibria.top");
+  // .wtf и старый anilibria.tv своего API не имеют — спрашиваем aniliberty.top
+  assert.equal(recognize("https://anilibria.tv/release/toaru-anbu-no-item.html").ref.api, "https://aniliberty.top");
+  const k = normalizeUrl("https://aniliberty.top/anime/releases/toaru-anbu-no-item");
+  assert.equal(k, "anilibria:toaru-anbu-no-item");
+  for (const u of [
+    "https://anilibria.top/anime/releases/release/toaru-anbu-no-item",
+    "https://www.anilibria.wtf/anime/releases/toaru-anbu-no-item/",
+    "https://anilibria.tv/release/toaru-anbu-no-item.html",
+    "https://aniliberty.top/anime/releases/Toaru-Anbu-no-Item?utm_source=tg",
+  ])
+    assert.equal(normalizeUrl(u), k, u);
+  assert.equal(siteTitle("aniliberty.top"), "AniLibria");
+  assert.equal(providerForSite("anilibria.top"), "anilibria");
+});
+t("AniLibria: серия — отдельно от тайтла; списки и подстраницы — обычные страницы", () => {
+  const e = recognize("https://aniliberty.top/anime/video/episode/a2f90072-763b-4e24-8e6a-f5074c420e80");
+  assert.equal(e.kind, "anime");
+  assert.equal(e.kindLabel, "Серия аниме");
+  assert.equal(e.ref.episode, "a2f90072-763b-4e24-8e6a-f5074c420e80");
+  assert.notEqual(e.key, recognize("https://aniliberty.top/anime/releases/toaru-anbu-no-item").key);
+  for (const u of ["https://aniliberty.top/anime/releases/latest", "https://aniliberty.top/anime/catalog", "https://aniliberty.top/anime/schedule", "https://aniliberty.top/anime/releases/x/torrents", "https://aniliberty.top/anime/releases/x?page=2"]) {
+    const r = recognize(u);
+    assert.equal(r.kind, "page", u);
+    assert.equal(r.provider, "page", u);
+  }
+});
+t("MangaLib: тайтл по номеру, главы и вкладки — отдельно", () => {
+  const r = recognize("https://mangalib.org/ru/manga/1773--wind-breaker");
+  assert.equal(r.provider, "mangalib");
+  assert.equal(r.kind, "manga");
+  assert.deepEqual(r.ref, { slug: "1773--wind-breaker" });
+  assert.equal(normalizeUrl("https://mangalib.me/ru/manga/1773--wind-breaker?section=info"), normalizeUrl("https://mangalib.org/ru/manga/1773--wind-breaker/"));
+  assert.equal(recognize("https://mangalib.org/ru/manga/1773--wind-breaker?section=chapters").kind, "page");
+  assert.equal(recognize("https://mangalib.org/ru/1773--wind-breaker/read/v1/c1").kind, "page");
+  assert.notEqual(normalizeUrl("https://mangalib.org/ru/1773--wind-breaker/read/v1/c1"), normalizeUrl("https://mangalib.org/ru/1773--wind-breaker/read/v1/c2"));
+  assert.equal(siteTitle("mangalib.me"), "MangaLib");
+});
+t("Webtoons: тайтл и эпизод, Canvas отдельно", () => {
+  const r = recognize("https://www.webtoons.com/en/fantasy/tower-of-god/list?title_no=95");
+  assert.equal(r.provider, "webtoons");
+  assert.equal(r.kind, "manga");
+  assert.equal(r.kindLabel, "Вебтун");
+  assert.equal(r.key, "webtoons:original:95");
+  assert.equal(normalizeUrl("https://m.webtoons.com/en/fantasy/tower-of-god/list?title_no=95"), r.key);
+  const e = recognize("https://www.webtoons.com/en/fantasy/tower-of-god/season-1-ep-0/viewer?title_no=95&episode_no=1");
+  assert.equal(e.kindLabel, "Вебтун · эпизод");
+  assert.equal(e.key, "webtoons:original:95:1");
+  assert.deepEqual(e.ref, { lang: "en", genre: "fantasy", slug: "tower-of-god", no: "95", ep: "1" });
+  assert.notEqual(e.key, recognize("https://www.webtoons.com/en/fantasy/tower-of-god/season-1-ep-1/viewer?title_no=95&episode_no=2").key);
+  assert.equal(recognize("https://www.webtoons.com/en/canvas/my-comic/list?title_no=95").key, "webtoons:canvas:95");
+  // страница 2 списка эпизодов, жанры, поиск — обычные страницы
+  assert.equal(recognize("https://www.webtoons.com/en/fantasy/tower-of-god/list?title_no=95&page=2").kind, "page");
+  assert.equal(recognize("https://www.webtoons.com/en/genres/fantasy").kind, "page");
+});
+t("Rutube: видео, shorts, канал", () => {
+  const r = recognize("https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/?r=wd");
+  assert.equal(r.provider, "rutube");
+  assert.equal(r.kind, "video");
+  assert.equal(r.key, "rutube:c6cc4d620b1d4338901770a44b3e82f4");
+  assert.equal(normalizeUrl("https://rutube.ru/play/embed/c6cc4d620b1d4338901770a44b3e82f4"), r.key);
+  assert.equal(recognize("https://rutube.ru/shorts/c6cc4d620b1d4338901770a44b3e82f4/").kind, "short");
+  assert.equal(recognize("https://rutube.ru/channel/23704195/").kind, "channel");
+  assert.equal(recognize("https://rutube.ru/channel/23704195/videos/").kind, "page");
+  assert.equal(recognize("https://rutube.ru/video/private/c6cc4d620b1d4338901770a44b3e82f4/?p=abc").kind, "page");
+});
+t("hh.ru: вакансия по номеру (регионы и параметры поиска — та же)", () => {
+  const r = recognize("https://hh.ru/vacancy/137636505");
+  assert.equal(r.provider, "hh");
+  assert.equal(r.kind, "vacancy");
+  assert.equal(r.kindLabel, "Вакансия");
+  assert.equal(r.icon, "💼");
+  assert.equal(normalizeUrl("https://spb.hh.ru/vacancy/137636505?query=python&hhtmFrom=vacancy_search_list"), r.key);
+  assert.equal(recognize("https://hh.ru/search/vacancy?text=python").kind, "page");
+  assert.equal(recognize("https://hh.ru/vacancy/137636505/response").kind, "page");
+  assert.equal(siteTitle("spb.hh.ru"), "hh.ru");
+});
+t("Ozon: товар по номеру", () => {
+  const r = recognize("https://www.ozon.ru/product/smartfon-apple-iphone-15-128gb-chernyy-1234567890/?advert=abc&avtc=1");
+  assert.equal(r.provider, "ozon");
+  assert.equal(r.kind, "product");
+  assert.equal(r.key, "ozon:1234567890");
+  assert.equal(normalizeUrl("https://ozon.ru/product/1234567890/"), r.key);
+  assert.equal(recognize("https://www.ozon.ru/product/1234567890/reviews/").kind, "page");
+  assert.equal(recognize("https://www.ozon.ru/category/smartfony-15502/").kind, "page");
+  assert.equal(siteTitle("ozon.ru"), "Ozon");
+});
+t("прежние сайты распознаются как раньше", () => {
+  assert.equal(recognize("https://shikimori.one/animes/52991-frieren").kind, "anime");
+  assert.equal(recognize("https://www.youtube.com/watch?v=dQw4w9WgXcQ").kind, "video");
+  assert.equal(recognize("https://github.com/o/r").kind, "repo");
+  assert.equal(providerForSite("example.com"), null);
+});
+
+// ---------------------------------------------------------------- новые сайты: разбор ответов
+t("разбор HTML без DOM: метатеги, сущности, schema.org", () => {
+  assert.equal(decodeEntities("a&mdash;b &amp; &#39;c&#x27; &laquo;д&raquo; &unknown;"), "a—b & 'c' «д» &unknown;");
+  const m = metaTags(`<head><title> A &amp; B </title><meta property="og:title" content="T1"><meta content='D' name=description><meta property="og:title" content="T2"></head>`);
+  assert.equal(m.title, "A & B");
+  assert.equal(m["og:title"], "T1");
+  assert.equal(m.description, "D");
+  assert.deepEqual(jsonLd(`<script type="application/ld+json">{"@graph":[{"@type":"A"}]}</script><script type="application/ld+json">{битый</script>`).map((o) => o["@type"] || "graph"), ["graph", "A"]);
+  assert.equal(duration(3725), "1:02:05");
+  assert.equal(duration(65), "1:05");
+  assert.equal(duration(0), "");
+});
+t("AniLiberty API: тайтл и серия (образец ответа)", () => {
+  const p = anilibriaPatch(fixtureJSON("anilibria-release.json"), "https://aniliberty.top");
+  assert.equal(p.title, "Некий ITEM тёмной стороны");
+  assert.equal(p.meta, "осень 2026 · ТВ, 7 эп. · выходит · ★ 7.7 · фантастика, экшен");
+  assert.ok(p.description.startsWith("История разворачивается в Академии-сити"));
+  assert.ok(p.description.length <= 600);
+  assert.equal(p.image, "https://aniliberty.top/storage/releases/posters/10329/HkOfY3XFdQytm3vAzpaQDoSX1vOQt1Hv.jpg");
+  const e = fixtureJSON("anilibria-episode.json");
+  const s = anilibriaPatch(e.release, "https://anilibria.top", e);
+  assert.equal(s.title, "Некий ITEM тёмной стороны — серия 1");
+  assert.ok(s.meta.startsWith("«ITEM» · осень 2026"));
+  assert.ok(s.image.startsWith("https://anilibria.top/storage/"));
+});
+t("MangaLib API и запасные метатеги (образцы)", () => {
+  const p = mangalibPatch(fixtureJSON("mangalib-title.json").data);
+  assert.equal(p.title, "Ветролом");
+  assert.equal(p.meta, "2013 · манхва, 561 гл. · выпуск прекращён · JO Yongseok · боевик, драма, комедия");
+  assert.ok(p.description.startsWith("Манхва «Ветролом» — драма"));
+  assert.equal(p.image, "https://cover.mangalib.me/uploads/cover/wind-breaker/cover/1879304e-ac22-4ab9-a41c-69a4dbcecfd8.jpg");
+  const f = mangalibMetaPatch(metaTags(fixture("mangalib-page.html")));
+  assert.equal(f.title, "Ветролом / Wind Breaker");
+  assert.ok(f.description.startsWith("Манхва «Ветролом»"));
+  assert.ok(f.image.endsWith(".jpg"));
+});
+t("Webtoons: страница тайтла и эпизода (образцы)", () => {
+  const p = webtoonPatch(fixture("webtoons-title.html"), { genre: "fantasy" });
+  assert.equal(p.title, "Tower of God");
+  assert.equal(p.meta, "SIU · фэнтези · 1.3B просмотров · 4.2M подписчиков");
+  assert.ok(p.description.includes("Whatever you desire—it's here."));
+  assert.ok(p.image.startsWith("https://swebtoon-phinf.pstatic.net/"));
+  const e = webtoonPatch(fixture("webtoons-episode.html"), { genre: "fantasy", ep: "1" });
+  assert.equal(e.title, "Tower of God - [Season 1] Ep. 0");
+  assert.equal(e.meta, "эпизод 1 · SIU · фэнтези");
+  assert.equal(webtoonPatch("<html></html>", { genre: "slice-of-life" }).meta, "повседневность");
+});
+t("Rutube API (образец по схеме ответа)", () => {
+  const p = rutubePatch(fixtureJSON("rutube-video.json"));
+  assert.equal(p.title, "Как устроен космический телескоп «Джеймс Уэбб»");
+  assert.equal(p.meta, "Научпоп · 1:02:05 · 15 тыс. просмотров · 2024 · Наука");
+  assert.equal(p.description, "Рассказываем, как устроен телескоп и что он уже увидел.");
+  assert.equal(rutubePatch({ title: "Эфир", is_livestream: true }).meta, "трансляция");
+});
+t("hh.ru: страница вакансии (образцы; API гостям закрыт)", () => {
+  const a = hhPagePatch(fixture("hh-vacancy.html"));
+  assert.equal(a.title, "Python разработчик");
+  assert.equal(a.meta, "Газпром информ · Санкт-Петербург · опыт 3–6 лет"); // «не указана» и «на месте» не пишем
+  assert.ok(a.description.startsWith('ООО "Газпром информ" - аккредитованная IT компания'));
+  assert.ok(!/[<>]/.test(a.description));
+  const b = hhPagePatch(fixture("hh-vacancy-remote.html"));
+  assert.equal(b.title, "Middle+/Senior Python Developer (FastAPI)");
+  assert.equal(b.meta, "evrone.ru · до 300 000 ₽ за месяц · Москва · удалённо · опыт более 6 лет");
+  // без schema.org — по og:title
+  const c = hhPagePatch('<meta property="og:title" content="Вакансия Курьер в Казани, работа в компании Ромашка"><meta property="og:description" content="Зарплата: от 50000 до 80000 ₽ за месяц. Казань.">');
+  assert.equal(c.title, "Курьер");
+  assert.equal(c.meta, "Ромашка · от 50 000 до 80 000 ₽ за месяц");
+  // проверка «вы не робот» / вход — не вакансия
+  assert.equal(hhPagePatch("<html><head><title>Похоже, нет соединения</title></head><body></body></html>"), null);
 });
 
 // ---------------------------------------------------------------- сообщение

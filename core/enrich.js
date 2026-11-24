@@ -144,6 +144,242 @@ export function githubPatch(kind, d) {
   };
 }
 
+// ---------------------------------------------------------------- HTML без DOM (проверяется в node)
+
+const ENT = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", mdash: "—", ndash: "–", hellip: "…", laquo: "«", raquo: "»",
+  rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", bull: "•", middot: "·", copy: "©", reg: "®", trade: "™", times: "×",
+};
+
+/** &amp; &mdash; &#39; &#x27; → символы. */
+export function decodeEntities(s) {
+  return String(s || "").replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e) => {
+    if (e[0] === "#") {
+      const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : all;
+    }
+    return ENT[e.toLowerCase()] ?? all;
+  });
+}
+
+/** HTML → чистый текст (описание вакансии и т.п.). */
+export function htmlText(s) {
+  return decodeEntities(
+    String(s || "")
+      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<\/?(p|div|li|br|ul|ol|h\d)\b[^>]*>/gi, " ")
+      .replace(/<[^>]+>/g, "")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Метатеги страницы из текста HTML: {"og:title": …, "description": …, title: <title>}. */
+export function metaTags(html) {
+  const head = String(html || "").slice(0, 300000);
+  const out = {};
+  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) {
+    const attr = (n) => {
+      const m = tag.match(new RegExp(`\\s${n}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+      return m ? (m[1] ?? m[2] ?? m[3]) : null;
+    };
+    const k = attr("property") || attr("name") || attr("itemprop");
+    const v = attr("content");
+    if (k && v != null && !(k.toLowerCase() in out)) out[k.toLowerCase()] = decodeEntities(v).trim();
+  }
+  const t = head.match(/<title[^>]*>([^<]*)<\/title>/i);
+  if (t) out.title = decodeEntities(t[1]).replace(/\s+/g, " ").trim();
+  return out;
+}
+
+/** Объекты schema.org из <script type="application/ld+json"> (с @graph и массивами — плоским списком). */
+export function jsonLd(html) {
+  const out = [];
+  const re = /<script[^>]*type\s*=\s*["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi;
+  const walk = (v) => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") {
+      out.push(v);
+      if (v["@graph"]) walk(v["@graph"]);
+    }
+  };
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    try {
+      walk(JSON.parse(m[1].trim()));
+    } catch (e) {
+      /* битый JSON на странице — пропускаем */
+    }
+  }
+  return out;
+}
+
+const ldOf = (list, type) => list.find((o) => [].concat(o["@type"] || []).some((t) => String(t).toLowerCase() === type));
+
+// ---------------------------------------------------------------- AniLibria / AniLiberty
+
+const ALIB_TYPE = { TV: "ТВ", ONA: "ONA", OVA: "OVA", WEB: "web", MOVIE: "фильм", SPECIAL: "спешл", DORAMA: "дорама" };
+
+/** Ответ api/v1/anime/releases/<код> (или release внутри серии) → поля записи. ep — серия, если ссылка на неё. */
+export function anilibriaPatch(d, api, ep) {
+  const name = d.name || {};
+  const total = d.episodes_total || (Array.isArray(d.episodes) ? d.episodes.length : 0);
+  const type = (d.type && (ALIB_TYPE[d.type.value] || d.type.description || d.type.value)) || "";
+  const season = d.season && d.season.description ? `${d.season.description.toLowerCase()} ${d.year || ""}`.trim() : d.year;
+  const status = d.is_ongoing ? "выходит" : d.is_in_production ? "анонс" : total ? "вышло" : "";
+  const rating = d.shikimori && d.shikimori.rating ? score(d.shikimori.rating) : "";
+  const genres = (d.genres || []).map((g) => String(g.name || "").toLowerCase()).filter(Boolean).slice(0, 3).join(", ");
+  const poster = d.poster && (d.poster.src || d.poster.preview);
+  const image = poster ? new URL(poster, api).href : "";
+  const meta = joinMeta([season, [type, count(total, "эп.")].filter(Boolean).join(", "), status, rating, genres]);
+  const description = clip(String(d.description || "").replace(/\s+/g, " ").trim(), 600);
+  const title = name.main || name.english || "";
+  if (ep) {
+    return { title: `${title} — серия ${ep.ordinal}`, meta: joinMeta([ep.name ? `«${ep.name}»` : "", meta]), description, image };
+  }
+  return { title, meta, description, image };
+}
+
+// ---------------------------------------------------------------- MangaLib
+
+/** Описание MangaLib — документ редактора ({type:"doc", content:[…]}) или строка. */
+function docText(n) {
+  if (!n) return "";
+  if (typeof n === "string") return n;
+  if (Array.isArray(n)) return n.map(docText).join(" ");
+  return [n.text || "", docText(n.content)].join(" ");
+}
+
+/** Ответ api2.mangalib.me/api/manga/<id--slug> → поля записи. */
+export function mangalibPatch(d) {
+  const ch = d.items_count && d.items_count.uploaded;
+  const kind = [d.type && String(d.type.label || "").toLowerCase(), count(ch, "гл.")].filter(Boolean).join(", ");
+  const author = (d.authors || []).map((a) => a.rus_name || a.name).filter(Boolean)[0];
+  const genres = (d.genres || []).map((g) => String(g.name || "").toLowerCase()).filter(Boolean).slice(0, 3).join(", ");
+  const rating = d.rating && (d.rating.averageFormated || d.rating.average);
+  return {
+    title: d.rus_name || d.eng_name || d.name,
+    meta: joinMeta([year(d.releaseDate), kind, d.status && String(d.status.label || "").toLowerCase(), author, score(rating), genres]),
+    description: clip(docText(d.summary).replace(/\s+/g, " ").trim(), 600),
+    image: (d.cover && (d.cover.default || d.cover.md)) || "",
+  };
+}
+
+/** Метатеги страницы MangaLib (если API не отдал тайтл гостю, например 18+). */
+export function mangalibMetaPatch(tags) {
+  return {
+    title: String(tags["og:title"] || "").replace(/\s+читать\s+[а-яё]+\s+онлайн\s*$/i, "").trim(),
+    description: clip(String(tags["og:description"] || "").replace(/^Читать [^.]*?онлайн на русском\.\s*/i, ""), 600),
+    image: tags["og:image"] || "",
+  };
+}
+
+// ---------------------------------------------------------------- Webtoons
+
+const WT_GENRE = {
+  action: "экшен", romance: "романтика", fantasy: "фэнтези", comedy: "комедия", drama: "драма", thriller: "триллер",
+  horror: "хоррор", "slice-of-life": "повседневность", sf: "научная фантастика", "sci-fi": "научная фантастика",
+  supernatural: "сверхъестественное", mystery: "детектив", sports: "спорт", historical: "история", heartwarming: "трогательное",
+  superhero: "супергерои", "romantic-fantasy": "романтическое фэнтези", "graphic-novel": "графический роман",
+  informative: "познавательное", school: "школа", "martial-arts": "боевые искусства", "time-slip": "путешествия во времени",
+  "web-novel": "веб-новелла", canvas: "Canvas", challenge: "Canvas",
+};
+
+/** Страница Webtoons (метатеги + счётчики) → поля записи. ref — из recognize. */
+export function webtoonPatch(html, ref = {}) {
+  const tags = metaTags(html);
+  const author = tags["com-linewebtoon:webtoon:author"] || tags["com-linewebtoon:episode:author"] || "";
+  const genre = WT_GENRE[String(ref.genre || "").toLowerCase()] || String(ref.genre || "").replace(/-/g, " ");
+  const cnt = (cls) => {
+    const m = String(html).match(new RegExp(`class="${cls}"[^>]*>[^<]*</span>\\s*<em class="cnt">([^<]+)</em>`));
+    return m ? m[1].trim() : "";
+  };
+  const views = cnt("ico_view");
+  const subs = cnt("ico_subscribe");
+  return {
+    title: tags["og:title"] || "",
+    meta: joinMeta([ref.ep ? `эпизод ${ref.ep}` : "", author, genre, views ? `${views} просмотров` : "", subs ? `${subs} подписчиков` : ""]),
+    description: clip(tags["og:description"], 600),
+    image: tags["og:image"] || "",
+  };
+}
+
+// ---------------------------------------------------------------- Rutube
+
+export function duration(sec) {
+  sec = Math.round(Number(sec) || 0);
+  if (!sec) return "";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = String(sec % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** Ответ rutube.ru/api/video/<id>/ → поля записи. */
+export function rutubePatch(d) {
+  const hits = Number(d.hits) || 0;
+  return {
+    title: d.title || "",
+    meta: joinMeta([
+      d.author && d.author.name,
+      d.is_livestream ? "трансляция" : duration(d.duration),
+      hits ? `${kFormat(hits)} просмотров` : "",
+      year(d.publication_ts || d.created_ts),
+      d.category && d.category.name,
+    ]),
+    description: clip(String(d.description || "").replace(/\s+/g, " ").trim(), 600),
+    image: d.thumbnail_url || "",
+  };
+}
+
+// ---------------------------------------------------------------- hh.ru
+
+// API hh.ru (api.hh.ru/vacancies/<id>) гостям закрыт (403 forbidden) — всё берём со страницы вакансии:
+// schema.org JobPosting (должность, компания, город, описание) и метатеги (зарплата, опыт).
+const thousands = (s) => String(s).replace(/\d{4,}/g, (n) => n.replace(/\B(?=(\d{3})+(?!\d))/g, " "));
+
+/** Страница вакансии hh.ru → поля записи. null — это не страница вакансии (вход, проверка). */
+export function hhPagePatch(html) {
+  const tags = metaTags(html);
+  const j = ldOf(jsonLd(html), "jobposting");
+  const og = String(tags["og:description"] || tags.description || "").replace(/\s+/g, " "); // неразрывные пробелы — обычными
+  const part = (name) => {
+    const m = og.match(new RegExp(`${name}:\\s*([^.]+)\\.`));
+    return m ? m[1].trim() : "";
+  };
+  const salary = part("Зарплата");
+  const exp = part("Требуемый опыт");
+  // «Формат работы: удалённо / гибрид» — в разметке страницы; «на месте работодателя» не пишем
+  const fm = String(html).match(/Формат работы:\s*(?:<[^>]+>\s*)*([^<]+)</);
+  const fmText = fm ? decodeEntities(fm[1]).replace(/\s+/g, " ").trim() : "";
+  const format = /на месте/i.test(fmText) ? "" : fmText;
+  let title = j ? decodeEntities(j.title || "") : "";
+  let company = j && j.hiringOrganization ? decodeEntities(j.hiringOrganization.name || "") : "";
+  let city = "";
+  if (j) {
+    const loc = [].concat(j.jobLocation || [])[0] || {};
+    const addr = loc.address || {};
+    city = typeof addr === "string" ? addr : addr.addressLocality || "";
+  }
+  if (!title) {
+    // «Вакансия Python разработчик в Москве, работа в компании Х»
+    const m = String(tags["og:title"] || "").match(/^Вакансия\s+(.+?)(?:\s+в\s+[^,]+)?,\s+работа в компании\s+(.+)$/);
+    if (!m) return null;
+    [, title, company] = m;
+  }
+  return {
+    title,
+    meta: joinMeta([
+      company,
+      salary && !/не указана/i.test(salary) ? thousands(salary) : "",
+      city,
+      format,
+      exp ? `опыт ${exp}` : "",
+    ]),
+    description: clip(htmlText(j && j.description), 600),
+  };
+}
+
 /** Метатеги из HTML (og:*, description, twitter:*). */
 export function parseMeta(doc) {
   const pick = (...sels) => {
@@ -165,7 +401,10 @@ export function parseMeta(doc) {
 
 // ---------------------------------------------------------------- сеть
 
-const GAP = { shikimori: 350, mal: 1100, anilist: 800, github: 400, wikipedia: 150, youtube: 150, page: 250, habr: 300 };
+const GAP = {
+  shikimori: 350, mal: 1100, anilist: 800, github: 400, wikipedia: 150, youtube: 150, page: 250, habr: 300,
+  anilibria: 400, mangalib: 600, webtoons: 500, rutube: 300, hh: 1000,
+};
 const lastHit = new Map();
 
 async function polite(key, gap) {
@@ -205,8 +444,9 @@ export function safeToFetch(url) {
   return true;
 }
 
-async function pageMeta(url) {
-  if (!safeToFetch(url)) return { doc: null, meta: {} };
+/** Текст HTML-страницы, запрошенной гостем, или "" (увело на другой сайт, не HTML, опасный адрес). */
+async function pageHtml(url) {
+  if (!safeToFetch(url)) return "";
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 12000);
   try {
@@ -214,15 +454,20 @@ async function pageMeta(url) {
     const r = await fetch(url, { credentials: "omit", signal: ctl.signal, headers: { Accept: "text/html" } });
     if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
     // гостя перекинуло на другой сайт (вход в Google, Notion, Jira) — это не та страница
-    if (r.redirected && siteOf(r.url) !== siteOf(url)) return { doc: null, meta: {} };
+    if (r.redirected && siteOf(r.url) !== siteOf(url)) return "";
     const type = r.headers.get("content-type") || "";
-    if (!/html/.test(type)) return { doc: null, meta: {} };
-    const text = (await r.text()).slice(0, 600000);
-    const doc = new DOMParser().parseFromString(text, "text/html");
-    return { doc, meta: parseMeta(doc) };
+    if (!/html/.test(type)) return "";
+    return (await r.text()).slice(0, 600000);
   } finally {
     clearTimeout(t);
   }
+}
+
+async function pageMeta(url) {
+  const text = await pageHtml(url);
+  if (!text) return { doc: null, meta: {} };
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  return { doc, meta: parseMeta(doc) };
 }
 
 const ANILIST_Q = {
@@ -230,6 +475,9 @@ const ANILIST_Q = {
   character: `query($id:Int){Character(id:$id){name{full native}description(asHtml:false)image{large}media(perPage:1){nodes{title{romaji}}}}}`,
   staff: `query($id:Int){Staff(id:$id){name{full native}primaryOccupations description(asHtml:false)image{large}}}`,
 };
+
+// поля, которые API MangaLib принимает (неизвестное поле — ошибка 422 на весь запрос)
+const MANGALIB_FIELDS = ["summary", "genres", "authors", "releaseDate", "format", "chap_count"];
 
 /** Подробности для одной ссылки. rec — результат recognize(); возвращает поля для записи. */
 export async function fetchDetails(item) {
@@ -295,6 +543,55 @@ export async function fetchDetails(item) {
       description: clip(d.extract, 600),
       image: (d.thumbnail && d.thumbnail.source) || "",
     };
+  }
+  if (p === "anilibria") {
+    await polite("anilibria", GAP.anilibria);
+    if (ref.episode) {
+      const e = await getJSON(`${ref.api}/api/v1/anime/releases/episodes/${ref.episode}`);
+      return anilibriaPatch(e.release || {}, ref.api, e);
+    }
+    const d = await getJSON(`${ref.api}/api/v1/anime/releases/${encodeURIComponent(ref.alias)}`);
+    return anilibriaPatch(d, ref.api);
+  }
+  if (p === "mangalib") {
+    await polite("mangalib", GAP.mangalib);
+    try {
+      const fields = MANGALIB_FIELDS.map((f) => `fields[]=${f}`).join("&");
+      const d = await getJSON(`https://api2.mangalib.me/api/manga/${encodeURIComponent(ref.slug)}?${fields}`);
+      if (d.data && (d.data.rus_name || d.data.name)) return mangalibPatch(d.data);
+    } catch (e) {
+      if (e.retry) throw e;
+      // тайтлы 18+ API гостю не показывает (404) — берём метатеги страницы
+    }
+    await polite("mangalib", GAP.mangalib);
+    const html = await pageHtml(item.url);
+    return html ? mangalibMetaPatch(metaTags(html)) : {};
+  }
+  if (p === "webtoons") {
+    await polite("webtoons", GAP.webtoons);
+    const html = await pageHtml(item.url);
+    return html ? webtoonPatch(html, ref) : {};
+  }
+  if (p === "rutube") {
+    await polite("rutube", GAP.rutube);
+    try {
+      const d = await getJSON(`https://rutube.ru/api/video/${ref.id}/?format=json`);
+      if (d && d.title) return rutubePatch(d);
+    } catch (e) {
+      if (e.retry || e.status === 404) throw e;
+      // API не ответил — ниже метатеги самой страницы видео
+    }
+  }
+  if (p === "hh") {
+    await polite("hh", GAP.hh);
+    // сама вакансия, без параметров поиска (spb.hh.ru/vacancy/1?query=… — та же страница)
+    const html = await pageHtml(`https://hh.ru/vacancy/${ref.id}`);
+    return (html && hhPagePatch(html)) || {};
+  }
+  if (p === "ozon") {
+    // Ozon гостю (без ваших куки) отдаёт проверку антибота с кодом 403, а не товар — не запрашиваем:
+    // остаются название, описание и картинка, прочитанные с открытой вкладки при сборе
+    return {};
   }
   // Хабр и любые другие сайты — метатеги страницы
   let host = "";

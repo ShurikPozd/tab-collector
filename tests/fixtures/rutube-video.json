@@ -1,0 +1,23 @@
+{
+ "id": "c6cc4d620b1d4338901770a44b3e82f4",
+ "title": "Как устроен космический телескоп «Джеймс Уэбб»",
+ "description": "Рассказываем, как\r\nустроен телескоп и что он уже увидел.",
+ "thumbnail_url": "https://pic.rutubelist.ru/video/2b/1f/2b1f0c2d6c1e4a8f9a3b5c7d9e1f3a5b.jpg",
+ "video_url": "https://rutube.ru/video/c6cc4d620b1d4338901770a44b3e82f4/",
+ "duration": 3725,
+ "hits": 15230,
+ "is_livestream": false,
+ "created_ts": "2024-03-01T10:00:00",
+ "publication_ts": "2024-03-02T12:30:00",
+ "author": {
+  "id": 23704195,
+  "name": "Научпоп",
+  "avatar_url": "https://pic.rutubelist.ru/user/aa/bb/aabb.jpg",
+  "site_url": "https://rutube.ru/channel/23704195/"
+ },
+ "category": {
+  "id": 13,
+  "name": "Наука",
+  "category_url": "https://rutube.ru/video/category/13/"
+ }
+}
