@@ -2224,14 +2224,23 @@ button.chev:hover {
   line-height: 0;
 }
 
-/* тесно (узкая панель и крупный масштаб): сначала прячется счётчик, потом — подписи, остаются значки */
-@container (max-width: 300px) {
-  .views .badge {
+/* тесно (узкая панель и крупный масштаб): сначала прячутся счётчик и значки — подписи понятнее;
+   совсем узко — значки без подписей. Пороги в em — учитывают масштаб интерфейса. */
+@container (max-width: 18.6em) {
+  .views .badge,
+  .views button > [data-icon] {
     display: none;
+  }
+  .views button {
+    padding: 0 12px;
+    min-width: 0;
   }
 }
 
-@container (max-width: 200px) {
+@container (max-width: 13em) {
+  .views button > [data-icon] {
+    display: inline-flex;
+  }
   .views .v-label {
     position: absolute;
     width: 1px;
@@ -2239,4 +2248,39 @@ button.chev:hover {
     overflow: hidden;
     clip-path: inset(50%);
   }
+}
+
+/* «Перейти к вкладке»: в списке — справа в строке, в плитках — в углу картинки */
+.row .r-go {
+  width: 2.4rem;
+  height: 2.4rem;
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+}
+
+.row:hover .r-go,
+.row:focus-within .r-go {
+  opacity: 1;
+}
+
+@media (hover: none), (max-width: 900px) {
+  .row .r-go {
+    opacity: 1;
+  }
+}
+
+.row:not(.tiles .row) {
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+}
+
+.tiles .group.open .row > .r-go {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+}
+
+.c-open {
+  color: var(--accent-ink);
+  font-weight: 600;
 }

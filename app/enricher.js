@@ -7,6 +7,9 @@ import { load, update } from "../core/store.js";
 
 const FIELDS = ["title", "meta", "description", "image", "siteName", "kind", "icon", "kindLabel"];
 let running = false;
+// запрошенные, но ещё не записанные ссылки: чтобы не спросить дважды. После записи — убираем,
+// поэтому «Попробовать ещё раз» снова их уточнит.
+const seen = new Set();
 let left = 0;
 let onState = () => {};
 
@@ -31,6 +34,7 @@ async function flush(patches) {
       it.enrich = p.enrich;
     }
   });
+  for (const id of batch.keys()) seen.delete(id);
 }
 
 // Уточняет только одна страница (вкладка или любая из панелей): замок общий для всех —
@@ -44,7 +48,6 @@ async function enrichLoop() {
   if (running) return;
   running = true;
   const patches = new Map();
-  const seen = new Set(); // уже запрошенные за этот запуск — второй раз не спрашиваем
   let timer = null;
   let writing = Promise.resolve();
   try {

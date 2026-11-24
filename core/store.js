@@ -85,6 +85,27 @@ export async function load() {
   return (await readAll()).d;
 }
 
+/**
+ * Правила склейки менялись (0.3.2): у старых записей ключ пересчитываем один раз,
+ * иначе та же ссылка, собранная снова, не узнаётся как уже собранная.
+ */
+const KEYS_VERSION = 3;
+export function migrateKeys() {
+  return update(async (d) => {
+    if ((d.settings.keysVersion || 0) >= KEYS_VERSION) return 0;
+    let n = 0;
+    for (const it of d.items) {
+      const k = normalizeUrl(it.url);
+      if (k !== it.nkey) {
+        it.nkey = k;
+        n++;
+      }
+    }
+    d.settings.keysVersion = KEYS_VERSION;
+    return n;
+  });
+}
+
 /** Только настройки — без чтения всего списка. */
 export async function loadSettings() {
   return (await area().get("settings")).settings || {};

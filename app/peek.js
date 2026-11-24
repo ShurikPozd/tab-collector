@@ -74,10 +74,17 @@ function place(target, x) {
   const r = target.getBoundingClientRect();
   const w = el.offsetWidth;
   const h = el.offsetHeight;
-  const left = Math.max(16, Math.min(x - w / 3, innerWidth - w - 16));
-  let top = r.bottom + 8;
-  if (top + h > innerHeight - 16) top = r.top - h - 8;
-  if (top < 16) top = Math.max(16, Math.min(innerHeight - h - 16, r.top));
+  const M = 16;
+  let left = Math.max(M, Math.min(x - w / 3, innerWidth - w - M));
+  let top;
+  if (r.bottom + 8 + h <= innerHeight - M) top = r.bottom + 8; // под элементом
+  else if (r.top - 8 - h >= M) top = r.top - h - 8; // над ним
+  else {
+    // ни сверху, ни снизу не помещается — сбоку, чтобы не закрывать сам элемент и его кнопки
+    top = Math.max(M, Math.min(r.top, innerHeight - h - M));
+    if (r.right + 8 + w <= innerWidth - M) left = r.right + 8;
+    else if (r.left - 8 - w >= M) left = r.left - w - 8;
+  }
   el.style.left = `${left}px`;
   el.style.top = `${top}px`;
 }

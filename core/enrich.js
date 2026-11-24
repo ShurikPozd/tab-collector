@@ -2,7 +2,7 @@
 // Работает на странице расширения (нужны fetch с host_permissions и DOMParser).
 // Разбор ответов (shikiPatch, jikanPatch…) — чистые функции, проверяются в node.
 
-import { kindFromOgType, kindMeta } from "./url.js";
+import { kindFromOgType, kindMeta, siteOf } from "./url.js";
 import { clip } from "./format.js";
 
 const SHIKI_KIND = {
@@ -214,7 +214,7 @@ async function pageMeta(url) {
     const r = await fetch(url, { credentials: "omit", signal: ctl.signal, headers: { Accept: "text/html" } });
     if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
     // гостя перекинуло на другой сайт (вход в Google, Notion, Jira) — это не та страница
-    if (r.redirected && new URL(r.url).hostname.replace(/^www\./, "") !== new URL(url).hostname.replace(/^www\./, "")) return { doc: null, meta: {} };
+    if (r.redirected && siteOf(r.url) !== siteOf(url)) return { doc: null, meta: {} };
     const type = r.headers.get("content-type") || "";
     if (!/html/.test(type)) return { doc: null, meta: {} };
     const text = (await r.text()).slice(0, 600000);
@@ -262,7 +262,8 @@ export async function fetchDetails(item) {
     const d = await getJSON(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(item.url)}`);
     const out = { title: d.title, meta: joinMeta([d.author_name]), image: `https://i.ytimg.com/vi/${ref.id}/hqdefault.jpg` };
     try {
-      const { meta } = await pageMeta(item.url);
+      // полный адрес, а не youtu.be: короткая ссылка перенаправляет на другой хост
+      const { meta } = await pageMeta(`https://www.youtube.com/watch?v=${ref.id}`);
       if (meta.description) out.description = clip(meta.description, 600);
     } catch (e) {
       /* описание — не обязательно */
@@ -305,7 +306,9 @@ export async function fetchDetails(item) {
   await polite(`page:${host}`, p === "habr" ? GAP.habr : GAP.page);
   const { doc, meta } = await pageMeta(item.url);
   // название, которое вы видели во вкладке, не заменяем тем, что страница отдала гостю
-  const hasTitle = item.title && item.title !== item.url;
+  // у недогруженной вкладки «названием» бывает сам адрес (без https:// и www) — его заменяем
+  const bare = (s) => String(s || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+  const hasTitle = item.title && bare(item.title) !== bare(item.url);
   const out = {
     title: hasTitle ? "" : meta.title,
     description: clip(meta.description, 600),

@@ -3,11 +3,12 @@
 import { hydrateIcons } from "./icons.js";
 import { itemText, listParts, linksWord, descLimit } from "../core/format.js";
 import { sendLinks, botSettings, sendable } from "../core/bot.js";
-import { patchItems } from "../core/store.js";
+import { patchItems, load } from "../core/store.js";
 import { esc } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let items = [];
+let sentBefore = new Map(); // отметки «отправлено» на момент открытия окна
 let onDone = () => {};
 let ctl = null;
 let bound = false;
@@ -114,7 +115,18 @@ async function go() {
     return status("Сначала впишите секрет бота в настройках (значок справа вверху).", "err");
   }
   status(m === "each" ? "Отправляю… бот сохраняет ссылки по одной, это может занять пару минут." : "Отправляю список…");
-  const res = await navigator.locks.request("tc-send", () => sendLinks(items, m, {
+  let res;
+  try {
+  // отправка идёт в другом окне сборщика — не ждём молча, а говорим
+  res = await navigator.locks.request("tc-send", { ifAvailable: true }, async (lock) => {
+    if (!lock) return { busy: true };
+    // пока окно было открыто, часть ссылок могли отправить из другого окна — их не шлём
+    // (сознательную повторную отправку уже отправленных — например, списком — не трогаем)
+    const fresh = new Map((await load()).items.map((it) => [it.id, it]));
+    const before = items.length;
+    items = items.filter((it) => fresh.has(it.id) && (fresh.get(it.id).sentAt || null) === (sentBefore.get(it.id) || null));
+    if (before && !items.length) return { allSentElsewhere: true };
+    return sendLinks(items, m, {
     title: $("list-title").value.trim(),
     desc: descChoice(m),
     signal: ctl.signal,
@@ -132,9 +144,23 @@ async function go() {
       items = items.filter((it) => !cat.has(it.id)); // «Отправить» ещё раз — только оставшиеся
       onDone();
     },
-  }));
-  ctl = null;
-  busy(false);
+  });
+  });
+  } catch (err) {
+    res = { error: "Не получилось отправить — попробуйте ещё раз.", results: new Map(), saved: 0, exists: 0, failed: 0, posts: 0, skipped: 0 };
+  } finally {
+    ctl = null;
+    busy(false);
+  }
+  if (res.busy) {
+    status("Отправка уже идёт в другом окне сборщика — дождитесь её конца.", "err");
+    return;
+  }
+  if (res.allSentElsewhere) {
+    status("Эти ссылки уже отправили из другого окна сборщика.", "ok");
+    $("send-go").disabled = true;
+    return;
+  }
   $("send-count").innerHTML = items.length ? `Осталось отправить: <b>${esc(linksWord(items.length))}</b>` : "Все выбранные ссылки отправлены";
 
   const parts = [];
@@ -158,6 +184,7 @@ export function openSend(selected, done) {
   if (!selected.length) return;
   if (!bound) bind();
   items = selected;
+  sentBefore = new Map(selected.map((it) => [it.id, it.sentAt || null]));
   onDone = done || (() => {});
   $("send-count").innerHTML = `Выбрано: <b>${esc(linksWord(items.length))}</b>`;
   $("list-title").value = "";

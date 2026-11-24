@@ -150,15 +150,30 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     })();
     return true;
   }
+  if (msg && msg.type === "focus-tab") {
+    focusTab(msg.tabId).then((ok) => reply({ ok }));
+    return true;
+  }
   if (msg && msg.type === "open") {
     (async () => {
       let n = 0;
+      let switched = 0;
+      // какие из ссылок уже открыты во вкладках: их не дублируем
+      const openByKey = new Map();
+      for (const t of await chrome.tabs.query({})) if (t.url && !t.url.startsWith(EXT)) openByKey.set(normalizeUrl(t.url), t);
       // справа от активной вкладки: из вкладки сборщика — от неё, из боковой панели — от открытой рядом
       let base = sender.tab;
       if (!base && msg.windowId != null) [base] = await chrome.tabs.query({ active: true, windowId: msg.windowId });
       let index = base ? base.index + 1 : undefined;
       for (const it of msg.items) {
         if (!/^(https?|file|ftp):/i.test(it.url || "")) continue; // javascript:, chrome:// и т.п. не открываем
+        const already = openByKey.get(normalizeUrl(it.url));
+        if (already) {
+          // одна ссылка — переключаемся на её вкладку; из нескольких — просто не открываем вторую копию
+          if (msg.items.length === 1) await focusTab(already.id);
+          switched++;
+          continue;
+        }
         try {
           const t = await chrome.tabs.create({
             url: it.url,
@@ -181,11 +196,22 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           /* одна негодная ссылка не мешает открыть остальные */
         }
       }
-      reply({ ok: true, n });
+      reply({ ok: true, n, switched });
     })();
     return true;
   }
 });
+
+/** Перейти к вкладке: сделать её активной и поднять её окно. */
+async function focusTab(tabId) {
+  try {
+    const t = await chrome.tabs.update(tabId, { active: true });
+    await chrome.windows.update(t.windowId, { focused: true });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   if (change.status === "complete") applyScroll(tabId);

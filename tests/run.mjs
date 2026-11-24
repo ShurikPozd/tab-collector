@@ -149,6 +149,17 @@ t("подстраницы — не дубли главной (правка в В
   assert.equal(recognize("https://github.com/o/r/pull/5").kind, "pr");
   assert.equal(k("https://x.ru/a?utm_source_platform=tg"), k("https://x.ru/a"));
 });
+t("служебные параметры не мешают распознаванию (GitHub, Википедия, YouTube)", () => {
+  const k = (u) => normalizeUrl(u);
+  assert.equal(recognize("https://github.com/o/r?tab=readme-ov-file").kind, "repo");
+  assert.equal(k("https://github.com/o/r?tab=readme-ov-file"), k("https://github.com/o/r"));
+  assert.equal(recognize("https://github.com/o/r/issues/5?notification_referrer_id=NT_x").kind, "issue");
+  assert.equal(recognize("https://github.com/torvalds?tab=stars").kind, "page");
+  assert.equal(recognize("https://ru.wikipedia.org/wiki/X?wprov=sfla1").provider, "wikipedia");
+  assert.equal(recognize("https://ru.m.wikipedia.org/wiki/X").provider, "wikipedia");
+  assert.equal(k("https://ru.m.wikipedia.org/wiki/X"), k("https://ru.wikipedia.org/wiki/X"));
+  assert.equal(recognize("https://www.youtube.com/@veritasium/featured").kind, "channel");
+});
 t("поиск Google и Яндекса", () => {
   const r = recognize("https://www.google.com/search?q=%D1%84%D1%80%D0%B8%D1%80%D0%B5%D0%BD+%D0%B0%D0%BD%D0%B8%D0%BC%D0%B5&sca_esv=1");
   assert.equal(r.kind, "search");

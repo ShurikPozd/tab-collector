@@ -58,7 +58,8 @@ export function untouchable(tab, extOrigin) {
 
 /**
  * Собрать вкладки в список и закрыть их. onProgress(done, total).
- * Вкладки с недописанным текстом сохраняются в список, но остаются открытыми (kept).
+ * Вкладки с недописанным текстом (или которые не успели проверить) сохраняются в список,
+ * но остаются открытыми (kept).
  * Возвращает { added, merged, ids, items (закрытые), kept (оставлены открытыми) }.
  */
 export async function collectTabs(tabs, { close = true, onProgress } = {}) {
@@ -70,7 +71,9 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
     while (queue.length) {
       const tab = queue.shift();
       const g = await grab(tab);
-      if (g.draft) drafts.add(tab.id);
+      // недописанный текст: проверка как у «Усыпить» (все кадры, shadow DOM); не успели — не закрываем
+      const loaded = !tab.discarded && tab.status !== "unloaded" && /^https?:/.test(tab.url);
+      if (g.draft || (loaded && (await draftIn(tab)) !== "no")) drafts.add(tab.id);
       // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы
       const t = g.url && /^https?:/.test(g.url) ? { ...tab, url: g.url } : tab;
       items.push({ order: tabs.indexOf(tab), item: makeItem(t, g), draft: !!g.draft });
@@ -87,10 +90,12 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   if (close) {
     const ids = tabs.map((t) => t.id).filter((id) => !drafts.has(id));
     for (let i = 0; i < ids.length; i += 50) {
+      const part = ids.slice(i, i + 50);
       try {
-        await chrome.tabs.remove(ids.slice(i, i + 50));
+        await chrome.tabs.remove(part);
       } catch (e) {
-        /* часть вкладок уже закрыли руками */
+        // одну из вкладок уже закрыли — остальные закрываем по одной
+        for (const id of part) await chrome.tabs.remove(id).catch(() => {});
       }
     }
   }

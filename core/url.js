@@ -70,6 +70,10 @@ export function collectable(url) {
  * якорь-маршрут (#inbox/AAA в почте, #@user в Telegram, #/page, #!, числа) — часть адреса.
  * У известных сайтов — по id (shikimori.one/animes/52991-frieren и /animes/52991 — одно).
  */
+// служебные параметры, которые не меняют страницу (GitHub дописывает сам, Википедия — в «Поделиться»)
+const HARMLESS = /^(notification_referrer_id|email_source|email_token|wprov|useskin|oldformat)$/i;
+const harmlessQuery = (u) => [...u.searchParams.entries()].every(([k, v]) => TRACKING.test(k) || HARMLESS.test(k) || (k === "tab" && /-ov-file$/.test(v)));
+
 const ANCHOR = /^#(|top|comments?|respond|reply[\w-]*|comment-\d+|content|main|section[\w-]*|toc[\w-]*|cite[\w-]*|h-[\w-]*|:~:text=.*)$/i;
 function decodeHash(h) {
   try {
@@ -175,7 +179,7 @@ export function recognize(url) {
       return { ...base, site: "youtube.com", ...kindInfo("playlist"), provider: "page", key: `youtube:list:${list}` };
     }
     // только главная канала: /@name/videos и /@name/community — разные страницы
-    if ((m = path.match(/^\/(@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)\/?$/))) {
+    if ((m = path.match(/^\/(@[^/]+|channel\/[\w-]+|c\/[^/]+|user\/[^/]+)(?:\/featured)?\/?$/))) {
       // @имя — без учёта регистра, /channel/UC… — с учётом
       const ch = m[1].startsWith("@") ? m[1].toLowerCase() : m[1];
       return { ...base, site: "youtube.com", ...kindInfo("channel"), provider: "page", key: `youtube:${ch}` };
@@ -186,7 +190,7 @@ export function recognize(url) {
   if (host === "github.com") {
     const parts = path.split("/").filter(Boolean);
     // ?tab=stars, ?tab=repositories и т.п. — разные страницы профиля
-    const plain = ![...u.searchParams.keys()].some((k) => !TRACKING.test(k));
+    const plain = harmlessQuery(u); // ?tab=readme-ov-file — та же страница репозитория, ?tab=stars — другая
     if (parts.length >= 1 && parts.length <= 4 && plain && !GH_RESERVED.has(parts[0].toLowerCase())) {
       const [owner, repo, section, num] = parts;
       if (repo && (section === "issues" || section === "pull") && /^\d+$/.test(num || "") && parts.length === 4) {
@@ -216,7 +220,7 @@ export function recognize(url) {
   }
 
   // правка, история, старая версия статьи (?action=edit, ?oldid=…) — не сама статья
-  if ((m = host.match(/^([a-z-]+)\.wikipedia\.org$/)) && path.startsWith("/wiki/") && ![...u.searchParams.keys()].some((k) => !TRACKING.test(k))) {
+  if ((m = host.match(/^([a-z-]+)(?:\.m)?\.wikipedia\.org$/)) && path.startsWith("/wiki/") && harmlessQuery(u)) {
     let title = path.slice(6);
     try {
       title = decodeURIComponent(title);

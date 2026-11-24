@@ -6,7 +6,7 @@ import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, rena
 import { collectTabs, sleepTabs, untouchable } from "../core/collect.js";
 import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS } from "../core/url.js";
 import { shotStamps } from "../core/shots.js";
-import { cleanOrphans } from "../core/store.js";
+import { cleanOrphans, migrateKeys } from "../core/store.js";
 import { bindPeek, shotUrl, forgetShots, forgetShotKeys } from "./peek.js";
 import { runEnrich, onEnrichState, retryFailed } from "./enricher.js";
 import { openSend } from "./send.js";
@@ -58,9 +58,20 @@ async function refreshShots() {
   for (const [k, ts] of stamps) if (prev.get(k) !== ts) changed.push(k);
   for (const k of prev.keys()) if (!stamps.has(k)) changed.push(k);
   st.shotStamps = stamps;
+  const had = st.shotKeys;
   st.shotKeys = new Set(stamps.keys());
-  if (prev.size && changed.length) forgetShotKeys(changed); // переснятые — показать заново
-  return changed.length > 0;
+  if (!prev.size || !changed.length) return false;
+  forgetShotKeys(changed);
+  // переснятые — просто подменить картинку там, где она уже показана (без перерисовки и мигания)
+  const retaken = changed.filter((k) => had.has(k) && st.shotKeys.has(k));
+  for (const k of retaken)
+    document.querySelectorAll(`img[data-shot="${CSS.escape(k)}"]`).forEach(async (img) => {
+      const u = await shotUrl(k);
+      if (u) img.src = u;
+    });
+  // новый или удалённый снимок — перерисовка нужна, только если такая ссылка сейчас на экране
+  const shown = new Set([...st.items.map((it) => it.nkey), ...st.tabs.map((t) => normalizeUrl(t.url))]);
+  return changed.some((k) => !retaken.includes(k) && shown.has(k));
 }
 
 /** Подставить снимки страниц в миниатюры (после отрисовки). */
@@ -216,6 +227,9 @@ async function reloadTabs() {
   else if (st.myWindowId == null) st.myWindowId = (await chrome.windows.getCurrent()).id;
   const q = st.scope === "window" ? { windowId: st.myWindowId } : {};
   st.tabs = await chrome.tabs.query(q);
+  // какие ссылки сейчас открыты во вкладках (для «● открыта» и перехода вместо дубля)
+  const all = st.scope === "window" ? await chrome.tabs.query({}) : st.tabs;
+  st.openKeys = new Set(all.filter((t) => t.url && !t.url.startsWith(EXT)).map((t) => normalizeUrl(t.url)));
   // выбор держим только на тех, что ещё можно собрать (вкладка могла закрыться или стать текущей)
   const live = new Set(st.tabs.filter((t) => selectable(t)).map((t) => t.id));
   for (const id of st.openSel) if (!live.has(id)) st.openSel.delete(id);
@@ -300,6 +314,7 @@ function renderOpen() {
                 <span class="fav">${favImg(t.favIconUrl, t.url)}</span>
                 <span class="r-text"><span class="r-title">${hl(t.title || t.url, st.q)}</span><span class="r-url">${hl(path, st.q)}</span></span>
                 <span class="tags">${tags}</span>
+                <button type="button" class="icon-btn r-go" data-go title="Перейти к этой вкладке (или двойной щелчок)" aria-label="Перейти к вкладке ${esc(t.title || t.url)}">${icon("external", 18)}</button>
               </label>`;
             })
             .join("")
@@ -339,6 +354,13 @@ function renderOpen() {
   $("sleep-btn").disabled = !sel || !!st.collecting;
 }
 
+/** Перейти к открытой вкладке. В панели панель остаётся, во вкладке сборщика — переключаемся. */
+async function goTab(tabId) {
+  // двойной щелчок успевает дважды переключить выбор — возвращаем как было
+  const r = await chrome.runtime.sendMessage({ type: "focus-tab", tabId }).catch(() => null);
+  if (!r || !r.ok) toast("Эта вкладка уже закрыта");
+}
+
 function visibleSelectable() {
   return openGroups().flatMap(([, ts]) => ts.filter(selectable));
 }
@@ -359,6 +381,11 @@ function bindOpen() {
       renderOpen();
       return;
     }
+    const go = e.target.closest("[data-go]");
+    if (go) {
+      e.preventDefault();
+      return goTab(Number(go.closest(".row").dataset.tab));
+    }
     const row = e.target.closest(".row");
     if (row && !row.classList.contains("off")) {
       e.preventDefault();
@@ -366,6 +393,13 @@ function bindOpen() {
       st.openSel.has(id) ? st.openSel.delete(id) : st.openSel.add(id);
       renderOpen();
     }
+  });
+  // двойной щелчок по вкладке — перейти к ней (одиночный — выбрать)
+  $("open-list").addEventListener("dblclick", (e) => {
+    const row = e.target.closest(".row");
+    if (!row || e.target.closest("input, button")) return;
+    e.preventDefault();
+    goTab(Number(row.dataset.tab));
   });
   $("open-all").addEventListener("change", (e) => {
     const tabs = visibleSelectable();
@@ -518,6 +552,15 @@ function renderSide() {
   if (h !== st.sideHtml) {
     st.sideHtml = h;
     keepFocus($("side-nav"), () => ($("side-nav").innerHTML = h));
+    // меню «Папки»/«Сайты» открыто — его кнопка пересоздана: привязываем к новой
+    const menu = $("folder-menu");
+    if (!menu.hidden && (menu.dataset.kind === "folder-pick" || menu.dataset.kind === "sites")) {
+      const btn = $("side-nav").querySelector(menu.dataset.kind === "sites" ? ".nav-sites-btn" : ".nav-folders-btn");
+      if (btn) {
+        menuOpener = btn;
+        btn.setAttribute("aria-expanded", "true");
+      } else closeMenu();
+    }
   }
 }
 
@@ -533,6 +576,7 @@ function card(it) {
     folder ? `<span>${icon("folder", 14).replace("<svg", '<svg style="display:inline;vertical-align:-2px;margin-right:4px"')}${esc(folder.name)}</span>` : "",
     it.sentAt ? `<span class="c-sent">✓ в Telegram${it.sentCategory ? ` · ${esc(it.sentCategory)}` : ""}</span>` : "",
     it.enrich === "pending" ? `<span class="c-pending">уточняю описание…</span>` : "",
+    st.openKeys && st.openKeys.has(it.nkey) ? `<span class="c-open">● открыта</span>` : "",
   ].join("");
   return `<article class="card${st.libSel.has(it.id) ? " sel" : ""}" data-id="${esc(it.id)}">
     <label class="chk"><input type="checkbox" ${st.libSel.has(it.id) ? "checked" : ""} aria-label="Выбрать" /><span class="box"></span></label>
@@ -545,7 +589,7 @@ function card(it) {
       <div class="c-foot">${foot}</div>
     </div>
     <div class="c-actions">
-      <button type="button" class="icon-btn" data-act="open" title="Открыть" aria-label="Открыть">${icon("external", 18)}</button>
+      <button type="button" class="icon-btn" data-act="open" title="${st.openKeys && st.openKeys.has(it.nkey) ? "Перейти к открытой вкладке" : "Открыть"}" aria-label="${st.openKeys && st.openKeys.has(it.nkey) ? "Перейти к открытой вкладке" : "Открыть"}">${icon("external", 18)}</button>
       <button type="button" class="icon-btn" data-act="del" title="Убрать из списка" aria-label="Убрать из списка">${icon("trash", 18)}</button>
     </div>
   </article>`;
@@ -611,8 +655,9 @@ function selectedItems() {
 }
 
 async function openItems(items) {
-  if (items.length >= 20 && !(await confirmDlg(`Открыть ${nLinksAcc(items.length)}?`, "Откроются в новых вкладках справа; все, кроме первой, — усыплёнными, чтобы не грузить компьютер.", "Открыть"))) return;
-  await chrome.runtime.sendMessage({ type: "open", items: items.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId });
+  if (items.length >= 20 && !(await confirmDlg(`Открыть ${nLinksAcc(items.length)}?`, "Откроются в новых вкладках справа; все, кроме первой, — усыплёнными, чтобы не грузить компьютер. Уже открытые не продублируются.", "Открыть"))) return;
+  const r = await chrome.runtime.sendMessage({ type: "open", items: items.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId }).catch(() => null);
+  if (r && items.length > 1 && r.switched) toast(`Открыто: ${r.n}. Уже были открыты: ${r.switched} — вторую копию не открывали`);
 }
 
 async function deleteItems(ids) {
@@ -661,13 +706,7 @@ function showFolderMenu(anchor) {
     (st.folders.length ? "<hr />" : "") +
     `<button type="button" data-folder="">${icon("close", 18)}<span>Убрать из папки</span></button>
      <button type="button" data-folder="new">${icon("folderPlus", 18)}<span>Новая папка…</span></button>`;
-  menu.hidden = false;
-  const r = anchor.getBoundingClientRect();
-  const w = menu.offsetWidth;
-  menu.style.left = `${Math.max(16, Math.min(r.left, innerWidth - w - 16))}px`;
-  const below = r.bottom + 6;
-  menu.style.top = below + menu.offsetHeight > innerHeight - 16 ? `${Math.max(16, r.top - menu.offsetHeight - 6)}px` : `${below}px`;
-  menu.querySelector("button").focus();
+  placeMenu(anchor);
 }
 
 function bindLib() {
@@ -785,17 +824,20 @@ function bindLib() {
     const i = btns.indexOf(document.activeElement);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      btns[(i + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length].focus();
+      const next = i < 0 ? (e.key === "ArrowDown" ? 0 : btns.length - 1) : (i + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length;
+      btns[next].focus();
     } else if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       closeMenu(true);
+    } else if (e.key === "Tab") {
+      closeMenu(); // фокус ушёл из меню — меню не висит открытым
     }
   });
   $("folder-menu").addEventListener("click", async (e) => {
     const fp = e.target.closest("[data-folder-pick]");
     if (fp) {
-      closeMenu();
+      closeMenu(true);
       let id = fp.dataset.folderPick;
       if (id === "new") {
         const name = await askName("Новая папка");
@@ -811,7 +853,7 @@ function bindLib() {
     }
     const pick = e.target.closest("[data-site-pick]");
     if (pick) {
-      closeMenu();
+      closeMenu(true);
       st.filter = pick.dataset.sitePick ? { type: "site", site: pick.dataset.sitePick } : { type: "all" };
       st.shown = PAGE;
       st.libSel.clear();
@@ -820,7 +862,7 @@ function bindLib() {
     }
     const b = e.target.closest("[data-folder]");
     if (!b) return;
-    closeMenu();
+    closeMenu(true);
     let fid = b.dataset.folder || null;
     if (fid === "new") {
       const name = await askName("Новая папка");
@@ -879,6 +921,7 @@ function onTabsChanged() {
   tabsTimer = setTimeout(async () => {
     await reloadTabs();
     renderOpen();
+    renderLib(); // «● открыта» у собранных
   }, 250);
   // фон снимает страницу ~через секунду после перехода — тогда и обновим миниатюры (и в панели)
   clearTimeout(shotsTimer);
@@ -928,6 +971,7 @@ async function init() {
     /* нет — не страшно */
   }
   await cleanOrphans().catch(() => {});
+  await migrateKeys().catch(() => {});
   await reloadItems();
   applyTheme(st.settings.theme || "auto");
   applyScale(scaleOf(st.settings));
@@ -1026,16 +1070,19 @@ async function init() {
     if (!t) return null;
     const r = recognize(t.url);
     const key = normalizeUrl(t.url);
+    const saved = st.items.find((it) => it.nkey === key); // уже собиралась — у неё есть описание
     return {
-      title: t.title,
+      title: (saved && saved.title) || t.title,
       url: t.url,
-      kind: r.kind,
-      kindLabel: r.kind !== "page" ? r.kindLabel : "",
-      icon: r.icon,
+      kind: saved ? saved.kind : r.kind,
+      kindLabel: saved ? saved.kindLabel : r.kind !== "page" ? r.kindLabel : "",
+      icon: saved ? saved.icon : r.icon,
       site: r.site,
+      meta: saved ? saved.meta : "",
+      description: saved ? saved.description : "",
+      image: saved ? saved.image : "",
       shotKey: st.shotKeys.has(key) ? key : "",
-      description: st.shotKeys.has(key) ? "" : "Снимка этой вкладки пока нет: он появится, когда вы на неё перейдёте.",
-      foot: t.discarded ? "усыплена" : "",
+      foot: [t.discarded ? "усыплена" : "", saved ? "уже есть в «Собранных»" : "", "двойной щелчок — перейти"].filter(Boolean).join(" · "),
     };
   });
   // вернулись на страницу сборщика — могли появиться новые снимки
