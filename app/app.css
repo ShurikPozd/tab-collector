@@ -885,8 +885,9 @@ input:disabled + .box {
   container-type: inline-size;
 }
 
-/* узкая колонка списка: действия — отдельной строкой во всю ширину, без пустоты слева */
-@container (max-width: 760px) {
+/* колонка списка не вмещает всё в одну строку: действия — отдельной строкой во всю ширину,
+   поровну, без пустоты слева */
+@container (max-width: 1080px) {
   .lib-main .bar-actions {
     width: 100%;
     margin-left: 0;
@@ -1655,7 +1656,8 @@ mark {
 }
 
 @container (min-width: 1100px) {
-  .cards:not(.tiles) {
+  .cards:not(.tiles):not(.grouped),
+  .cards.grouped:not(.tiles) .lg-cards {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
@@ -2283,4 +2285,175 @@ button.chev:hover {
 .c-open {
   color: var(--accent-ink);
   font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- «Собранные» группами
+   По сайтам (как в «Открытых») или по сборам: заголовок группы, под ним — её карточки. */
+.cards.grouped {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.lgroup {
+  border-radius: var(--r-l);
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
+  border: 1px solid var(--border);
+}
+
+.lg-head {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px 14px 18px;
+  cursor: pointer;
+  border-radius: var(--r-l);
+}
+
+.lg-head:hover {
+  background: var(--bg-3);
+}
+
+.lgroup:not(.closed) > .lg-head {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r-l) var(--r-l) 0 0;
+}
+
+.lg-ico {
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: var(--r-m);
+  background: var(--bg-3);
+  color: var(--fg-2);
+}
+
+.lg-ico img {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.lg-emoji {
+  font-size: 1.35rem;
+}
+
+.lg-name {
+  min-width: 0;
+}
+
+.lg-title {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.lg-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.lg-count {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--fg-2);
+  font-weight: 650;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.lg-head .chev svg {
+  transform: rotate(90deg);
+  transition: transform var(--t-fast) var(--ease);
+}
+
+.lgroup.closed .lg-head .chev svg {
+  transform: none;
+}
+
+.lg-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.cards.tiles.grouped .lg-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 14px;
+}
+
+.group-btn .chev-down svg {
+  transform: rotate(90deg);
+}
+
+.menu [aria-checked="true"] {
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+/* узко: «Группы» — значком, заголовок группы — компактнее, счётчик под названием */
+@media (max-width: 600px) {
+  .group-btn {
+    order: 2;
+    padding: 0 12px;
+  }
+  .group-btn .label,
+  .group-btn .chev-down {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .lg-head {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "chk ico name chev"
+      "chk ico count chev";
+    gap: 4px 12px;
+    padding: 12px 12px 12px 14px;
+  }
+  .lg-head .lg-chk {
+    grid-area: chk;
+  }
+  .lg-head .lg-ico {
+    grid-area: ico;
+  }
+  .lg-head .lg-name {
+    grid-area: name;
+  }
+  .lg-head .lg-count {
+    grid-area: count;
+    justify-self: start;
+    padding: 0;
+    background: none;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .lg-head .chev {
+    grid-area: chev;
+  }
+  .lg-cards {
+    padding: 10px;
+  }
+}
+
+/* «Собранные» средней ширины: «Плитки/Список» — значками, чтобы полоса действий
+   уместилась в одну строку (иначе кнопки уходят вниз и слева остаётся пусто) */
+@container (max-width: 1250px) {
+  .lib-main .layout-seg .label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .lib-main .layout-seg button {
+    padding: 0 12px;
+  }
 }

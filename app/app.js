@@ -36,7 +36,97 @@ const st = {
   enrichLeft: 0,
   shotKeys: new Set(), // у каких ссылок есть снимок страницы
   layout: { open: "tiles", lib: "tiles" }, // плитками (галерея) или списком
+  groupBy: "site", // «Собранные»: по сайтам, по сборам или без групп
+  closedGroups: new Set(), // свёрнутые группы (запоминаются)
 };
+
+const GROUP_LABEL = { site: "Сайты", batch: "Сборы", none: "Без групп" }; // коротко — на кнопке; полностью — в меню
+try {
+  st.closedGroups = new Set(JSON.parse(localStorage.getItem("tc:closed-groups") || "[]"));
+} catch (e) {
+  /* по умолчанию всё раскрыто */
+}
+function saveClosed() {
+  try {
+    localStorage.setItem("tc:closed-groups", JSON.stringify([...st.closedGroups].slice(-300)));
+  } catch (e) {
+    /* не критично */
+  }
+}
+
+/**
+ * Разбить показанные ссылки на группы.
+ * По сайтам — как в «Открытых»; если слева уже выбран один сайт — по типам (аниме, манга…).
+ * По сборам — что собрано за один раз (одно время сбора; старые записи — по паузе больше 2 минут).
+ */
+function groupItems(items) {
+  if (st.groupBy === "none") return null;
+  const groups = new Map();
+  const add = (key, it, make) => {
+    if (!groups.has(key)) groups.set(key, { key, items: [], ...make() });
+    groups.get(key).items.push(it);
+  };
+  if (st.groupBy === "batch") {
+    const sorted = items.slice().sort((a, b) => b.addedAt - a.addedAt);
+    let cur = null;
+    for (const it of sorted) {
+      if (!cur || cur.last - it.addedAt > 120000) {
+        cur = { key: `b:${it.addedAt}`, at: it.addedAt, last: it.addedAt };
+      }
+      cur.last = it.addedAt;
+      add(cur.key, it, () => ({ kind: "batch", at: cur.at }));
+    }
+    return [...groups.values()];
+  }
+  const byKind = st.filter.type === "site";
+  for (const it of items) {
+    if (byKind) add(`k:${it.kind}`, it, () => ({ kind: "kind", k: it.kind }));
+    else add(`s:${it.site}`, it, () => ({ kind: "site", site: it.site, sample: it }));
+  }
+  return [...groups.values()].sort((a, b) => b.items.length - a.items.length);
+}
+
+function groupHead(g, visAll) {
+  const ids = (visAll.get(g.key) || g.items).map((it) => it.id);
+  const nSel = ids.filter((id) => st.libSel.has(id)).length;
+  const closed = st.closedGroups.has(g.key);
+  const count = (visAll.get(g.key) || g.items).length;
+  let lead;
+  let title;
+  let sub = "";
+  if (g.kind === "batch") {
+    lead = `<span class="fav lg-ico">${icon("clock", 22)}</span>`;
+    title = `Собрано ${dateText(g.at)}`;
+    const sites = new Map();
+    for (const it of visAll.get(g.key) || g.items) sites.set(it.site, (sites.get(it.site) || 0) + 1);
+    sub = [...sites.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([site, n]) => `${hostLabel(site)} ${n}`)
+      .join(" · ");
+  } else if (g.kind === "kind") {
+    const k = KINDS[g.k] || KINDS.page;
+    lead = `<span class="fav lg-ico lg-emoji">${k.icon}</span>`;
+    title = k.label;
+  } else {
+    const smp = g.sample;
+    lead = `<span class="fav lg-ico">${favImg(smp.favicon, smp.url)}</span>`;
+    title = smp.provider && smp.provider !== "page" ? siteLabel(smp) : hostLabel(g.site);
+    const kinds = new Map();
+    for (const it of visAll.get(g.key) || g.items) if (it.kind !== "page") kinds.set(it.kindLabel, (kinds.get(it.kindLabel) || 0) + 1);
+    sub = [...kinds.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([kl, n]) => `${kl.toLowerCase()} ${n}`)
+      .join(" · ");
+  }
+  return `<div class="lg-head">
+      <span class="chk lg-chk"><input type="checkbox" ${nSel && nSel === ids.length ? "checked" : ""} data-ind="${nSel > 0 && nSel < ids.length ? 1 : 0}" aria-label="Выбрать всю группу «${esc(title)}»" /><span class="box"></span></span>
+      ${lead}
+      <span class="lg-name"><span class="lg-title">${esc(title)}</span>${sub ? `<span class="lg-sub">${esc(sub)}</span>` : ""}</span>
+      <span class="lg-count">${nSel ? `${nSel} из ${count}` : nLinks(count)}</span>
+      <button type="button" class="chev" aria-expanded="${!closed}" aria-label="${closed ? "Развернуть" : "Свернуть"} группу «${esc(title)}»">${icon("chevron", 20)}</button>
+    </div>`;
+}
 
 /** Переключатели «Плитки / Список» и классы списков. */
 function applyLayout() {
@@ -599,12 +689,27 @@ function renderLib() {
   renderSide();
   const vis = libVisible();
   $("lib-count").textContent = String(st.items.length || "");
-  const libHtml = vis.slice(0, st.shown).map(card).join("");
+  const page = vis.slice(0, st.shown);
+  const groups = groupItems(page);
+  $("lib-list").classList.toggle("grouped", !!groups);
+  let libHtml;
+  if (groups) {
+    // для флажка группы и счётчика — все ссылки группы в разделе, а не только показанные
+    const full = new Map((groupItems(vis) || []).map((g) => [g.key, g.items]));
+    libHtml = groups
+      .map((g) => {
+        const closed = st.closedGroups.has(g.key);
+        return `<section class="lgroup${closed ? " closed" : ""}" data-g="${esc(g.key)}">${groupHead(g, full)}${closed ? "" : `<div class="lg-cards">${g.items.map(card).join("")}</div>`}</section>`;
+      })
+      .join("");
+  } else libHtml = page.map(card).join("");
   if (libHtml !== st.libHtml) {
     st.libHtml = libHtml;
     keepFocus($("lib-list"), () => ($("lib-list").innerHTML = libHtml));
   }
+  $("lib-list").querySelectorAll('input[data-ind="1"]').forEach((i) => (i.indeterminate = true));
   fillShots($("lib-list"));
+  $("group-label").textContent = GROUP_LABEL[st.groupBy];
   const more = $("more-btn");
   more.hidden = vis.length <= st.shown;
   more.textContent = `Показать ещё ${Math.min(PAGE, vis.length - st.shown)}`;
@@ -779,6 +884,22 @@ function bindLib() {
   });
 
   $("lib-list").addEventListener("click", async (e) => {
+    const gh = e.target.closest(".lg-head");
+    if (gh) {
+      const key = gh.parentElement.dataset.g;
+      if (e.target.closest(".lg-chk")) {
+        e.preventDefault();
+        const g = (groupItems(libVisible()) || []).find((x) => x.key === key);
+        if (!g) return;
+        const allOn = g.items.every((it) => st.libSel.has(it.id));
+        for (const it of g.items) allOn ? st.libSel.delete(it.id) : st.libSel.add(it.id);
+      } else {
+        st.closedGroups.has(key) ? st.closedGroups.delete(key) : st.closedGroups.add(key);
+        saveClosed();
+      }
+      renderLib();
+      return;
+    }
     const c = e.target.closest(".card");
     if (!c) return;
     const id = c.dataset.id;
@@ -812,6 +933,16 @@ function bindLib() {
   });
   $("open-btn").addEventListener("click", () => openItems(selectedItems()));
   $("delete-btn").addEventListener("click", () => deleteItems([...st.libSel]));
+  $("group-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = $("folder-menu");
+    if (!menu.hidden && menu.dataset.kind === "group") return closeMenu(true);
+    menu.dataset.kind = "group";
+    const opt = (v, ic, text) =>
+      `<button type="button" data-group-pick="${v}" aria-checked="${st.groupBy === v}">${icon(ic, 18)}<span class="m-label">${text}</span><span class="m-count">${st.groupBy === v ? icon("check", 16) : ""}</span></button>`;
+    menu.innerHTML = opt("site", "globe", "По сайтам") + opt("batch", "clock", "По сборам — что собрано за раз") + opt("none", "list", "Без групп");
+    placeMenu(e.currentTarget);
+  });
   $("folder-btn").setAttribute("aria-expanded", "false");
   $("folder-btn").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -849,6 +980,15 @@ function bindLib() {
       st.shown = PAGE;
       st.libSel.clear();
       renderLib();
+      return;
+    }
+    const gp = e.target.closest("[data-group-pick]");
+    if (gp) {
+      closeMenu(true);
+      st.groupBy = gp.dataset.groupPick;
+      st.libHtml = "";
+      renderLib();
+      await saveSettings({ groupBy: st.groupBy });
       return;
     }
     const pick = e.target.closest("[data-site-pick]");
@@ -1034,6 +1174,7 @@ async function init() {
   bindOpen();
   bindLib();
   st.layout = { open: st.settings.layoutOpen || "tiles", lib: st.settings.layoutLib || "tiles" };
+  st.groupBy = GROUP_LABEL[st.settings.groupBy] ? st.settings.groupBy : "site";
   applyLayout();
   document.querySelectorAll("[data-layout]").forEach((b) =>
     b.addEventListener("click", async () => {

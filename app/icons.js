@@ -13,6 +13,8 @@ const P = {
   settings: '<path d="M4 7h9"/><path d="M19 7h1"/><circle cx="16" cy="7" r="2.5"/><path d="M4 17h2"/><path d="M12 17h8"/><circle cx="9" cy="17" r="2.5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   minus: '<path d="M6 12h12"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
   close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',

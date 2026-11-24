@@ -63,6 +63,7 @@ export function untouchable(tab, extOrigin) {
  * Возвращает { added, merged, ids, items (закрытые), kept (оставлены открытыми) }.
  */
 export async function collectTabs(tabs, { close = true, onProgress } = {}) {
+  const startedAt = Date.now(); // одно время на весь сбор — по нему «Собранные» группируются «по сборам»
   const items = [];
   const drafts = new Set();
   let done = 0;
@@ -76,7 +77,7 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
       if (g.draft || (loaded && (await draftIn(tab)) !== "no")) drafts.add(tab.id);
       // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы
       const t = g.url && /^https?:/.test(g.url) ? { ...tab, url: g.url } : tab;
-      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g), draft: !!g.draft });
+      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g, startedAt), draft: !!g.draft });
       done++;
       onProgress && onProgress(done, tabs.length);
     }
