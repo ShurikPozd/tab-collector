@@ -328,7 +328,8 @@ async function reloadTabs() {
   if (me) st.myWindowId = me.windowId;
   else if (st.myWindowId == null) st.myWindowId = (await chrome.windows.getCurrent()).id;
   const q = st.scope === "window" ? { windowId: st.myWindowId } : {};
-  st.tabs = await chrome.tabs.query(q);
+  st.tabs = await chrome.tabs.query({ ...q, windowType: "normal" }); // попапы и окна приложений не трогаем
+  if (st.fileOk == null) st.fileOk = await chrome.extension.isAllowedFileSchemeAccess().catch(() => false);
   // какие ссылки сейчас открыты во вкладках (для «● открыта» и перехода вместо дубля)
   const all = st.scope === "window" ? await chrome.tabs.query({}) : st.tabs;
   st.openKeys = new Set(all.filter((t) => t.url && !t.url.startsWith(EXT)).map((t) => normalizeUrl(t.url)));
@@ -343,6 +344,8 @@ function tabState(t) {
   if (t.id === st.myTabId) return "self";
   const u = untouchable(t, EXT);
   if (u) return u;
+  // файлы с диска: без «Доступа к URL файлов» расширение не сможет их потом открыть — не собираем
+  if (/^file:/i.test(t.url) && !st.fileOk) return "system";
   // в панели «текущая» — та, что открыта рядом с панелью; во вкладке — с которой открыли сборщик
   if (PANEL ? t.active && t.windowId === st.myWindowId : t.id === st.fromTab) return "current";
   return "";
@@ -557,8 +560,11 @@ function bindOpen() {
     const closed = res.items; // вкладки с черновиками не закрывались — их и не открываем
     toast(`Собрано: ${nTabs(tabs.length)}${extra ? ` (${extra})` : ""}`, async () => {
       // «Вернуть»: открыть закрытые вкладки обратно (усыплёнными, на месте прокрутки) и убрать добавленные записи
-      await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId });
-      await removeItems(res.ids);
+      const back = await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId }).catch(() => null);
+      // убираем из списка только то, что действительно снова открылось (файл с диска может не открыться)
+      const reopened = new Set((back && back.opened) || []);
+      const added = new Set(res.ids);
+      await removeItems(res.items.filter((it) => added.has(it.id) && reopened.has(it.url)).map((it) => it.id).concat(res.ids.filter((id) => !res.items.some((it) => it.id === id))));
       await reloadItems();
       await reloadTabs();
       render();
@@ -845,7 +851,7 @@ function showFolderMenu(anchor) {
   const menu = $("folder-menu");
   menu.dataset.kind = "folders";
   menu.innerHTML =
-    st.folders.map((f) => `<button type="button" data-folder="${esc(f.id)}">${icon("folder", 18)}<span>${esc(f.name)}</span></button>`).join("") +
+    st.folders.map((f) => `<button type="button" data-folder="${esc(f.id)}">${icon("folder", 18)}<span class="m-label">${esc(f.name)}</span></button>`).join("") +
     (st.folders.length ? "<hr />" : "") +
     `<button type="button" data-folder="">${icon("close", 18)}<span>Убрать из папки</span></button>
      <button type="button" data-folder="new">${icon("folderPlus", 18)}<span>Новая папка…</span></button>`;
@@ -1095,6 +1101,7 @@ function render() {
 
 let tabsTimer = null;
 let shotsTimer = null;
+let shotsSince = 0;
 function onTabsChanged() {
   clearTimeout(tabsTimer);
   tabsTimer = setTimeout(async () => {
@@ -1103,8 +1110,12 @@ function onTabsChanged() {
     if (st.view === "library") renderLib(); // «● открыта» у собранных (скрытый раздел нарисуется при переходе)
   }, 250);
   // фон снимает страницу ~через секунду после перехода — тогда и обновим миниатюры (и в панели)
+  // откладываем, но не дольше ~6 с: вкладка с мигающим заголовком не должна мешать обновлению снимков
+  if (shotsTimer && Date.now() - shotsSince > 6000) return;
   clearTimeout(shotsTimer);
+  if (!shotsTimer) shotsSince = Date.now();
   shotsTimer = setTimeout(async () => {
+    shotsTimer = null;
     if (await refreshShots()) {
       st.openHtml = st.libHtml = "";
       renderOpen();
@@ -1149,8 +1160,7 @@ async function init() {
   } catch (e) {
     /* нет — не страшно */
   }
-  await cleanOrphans().catch(() => {});
-  await migrateKeys().catch(() => {});
+  await migrateKeys().catch(() => {}); // раз за версию правил; обычно — одно чтение настроек
   await reloadItems();
   applyTheme(st.settings.theme || "auto");
   applyScale(scaleOf(st.settings));
@@ -1287,6 +1297,8 @@ async function init() {
     else renderLib();
   });
   render();
+  // уборка недостёртых записей — после отрисовки, чтобы панель открывалась сразу
+  setTimeout(() => cleanOrphans().catch(() => {}), 1500);
   runEnrich();
   setInterval(() => {
     if (!document.hidden && st.items.some((it) => it.enrich === "pending")) runEnrich();

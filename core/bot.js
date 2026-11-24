@@ -76,7 +76,13 @@ const QUICK = 5000; // сбой быстрее 5 с — бот не успел �
 
 /** Бот примет только обычные адреса до 2048 символов — остальные не отправляем. */
 export function sendable(item) {
-  return /^https?:\/\//i.test(item.url || "") && item.url.length <= 2048;
+  if (!/^https?:\/\//i.test(item.url || "") || item.url.length > 2048 || /\s/.test(item.url)) return false;
+  try {
+    new URL(item.url);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 /**

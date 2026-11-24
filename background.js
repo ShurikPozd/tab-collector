@@ -81,14 +81,15 @@ async function badge(text, tabId) {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "library") return openApp("library", tab);
   if (info.menuItemId === "panel") return chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
-  const all = await chrome.tabs.query({ windowId: tab.windowId });
+  const all = await chrome.tabs.query({ windowId: tab.windowId, windowType: "normal" });
   if (info.menuItemId === "sleep") {
     const res = await sleepTabs(all.filter((t) => t.id !== tab.id && !untouchable(t, EXT)));
     return badge(String(res.n), tab.id);
   }
   if (info.menuItemId === "site") {
     const site = siteOf(tab.url);
-    const pick = all.filter((t) => t.id !== tab.id && !untouchable(t, EXT) && siteOf(t.url) === site);
+    const fileOk = await chrome.extension.isAllowedFileSchemeAccess().catch(() => false);
+    const pick = all.filter((t) => t.id !== tab.id && !untouchable(t, EXT) && siteOf(t.url) === site && (fileOk || !/^file:/i.test(t.url)));
     if (!pick.length) return badge("0", tab.id);
     const res = await navigator.locks.request("tc-collect", () => collectTabs(pick));
     return badge(String(res.items.length), tab.id); // сколько вкладок закрыто (оставленные открытыми не в счёт)
@@ -161,6 +162,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     (async () => {
       let n = 0;
       let switched = 0;
+      const opened = []; // какие адреса реально открылись (или уже были открыты)
       // какие из ссылок уже открыты во вкладках: их не дублируем
       const openByKey = new Map();
       for (const t of await chrome.tabs.query({})) if (t.url && !t.url.startsWith(EXT)) openByKey.set(normalizeUrl(t.url), t);
@@ -175,6 +177,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           // одна ссылка — переключаемся на её вкладку; из нескольких — просто не открываем вторую копию
           if (msg.items.length === 1) await focusTab(already.id);
           switched++;
+          opened.push(it.url);
           continue;
         }
         try {
@@ -195,11 +198,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           }
           if (lazy) discardWhenReady(t.id);
           n++;
+          opened.push(it.url);
         } catch (e) {
           /* одна негодная ссылка не мешает открыть остальные */
         }
       }
-      reply({ ok: true, n, switched });
+      reply({ ok: true, n, switched, opened });
     })();
     return true;
   }

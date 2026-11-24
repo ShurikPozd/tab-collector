@@ -1,7 +1,7 @@
 // Автопроверки чистых модулей (без Chrome): node tests/run.mjs
 import assert from "node:assert/strict";
 import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf, siteLabel, providerForSite, siteTitle } from "../core/url.js";
-import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit } from "../core/format.js";
+import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit, clip } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
 import { sendable } from "../core/bot.js";
 
@@ -264,6 +264,22 @@ t("подробность описания", () => {
   assert.ok(payload("each", [frieren], "", "short").items[0].description.length <= 140);
   assert.ok(!itemText(frieren, { descMax: 0 }).includes("Эльфийка"));
   assert.ok(!listParts([frieren], "", 0)[0].includes("Эльфийка"));
+});
+t("эмодзи не режутся пополам (бот и Telegram не принимают «половинки»)", () => {
+  const s = "a".repeat(138) + "😀😀😀";
+  const c = clip(s, 140);
+  assert.ok(c.isWellFormed ? c.isWellFormed() : !/[\ud800-\udbff](?![\udc00-\udfff])/.test(c), "в обрезке нет половинки эмодзи");
+  const body = JSON.stringify(payload("list", [{ url: "https://x.ru", title: "т", description: s, kindLabel: "К", icon: "🎬" }]));
+  assert.ok(!/\\ud83d(?!\\ud)/i.test(body), "в запросе нет одиночного суррогата");
+  assert.ok(!sendable({ url: "https://x.ru/a b" }), "адрес с пробелом — не отправляем");
+});
+t("пачки списка на 5000 ссылок считаются быстро", () => {
+  const big = Array.from({ length: 5000 }, (_, i) => ({ id: String(i), url: "https://x.ru/" + i, title: "т".repeat(80), description: "ж".repeat(300), kindLabel: "К", icon: "🔗" }));
+  const t0 = Date.now();
+  const parts = batches("list", big);
+  assert.ok(Date.now() - t0 < 600, `долго: ${Date.now() - t0} мс`);
+  assert.equal(parts.flat().length, 5000);
+  assert.ok(parts.every((p) => bodySize(payload("list", p, "x".repeat(120))) <= BODY_MAX));
 });
 t("ошибки бота — по-русски", () => {
   assert.match(botError(404, null), /Обновите бота/);

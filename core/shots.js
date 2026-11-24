@@ -15,7 +15,8 @@ function open() {
 }
 
 let dbp = null;
-const db = () => (dbp ||= open());
+// не удалось открыть базу — попробуем снова в следующий раз, а не «навсегда без снимков»
+const db = () => (dbp ||= open().catch((e) => ((dbp = null), Promise.reject(e))));
 
 function tx(mode, fn) {
   return db().then(
@@ -25,6 +26,7 @@ function tx(mode, fn) {
         const out = fn(t.objectStore(STORE));
         t.oncomplete = () => res(out && "result" in out ? out.result : undefined);
         t.onerror = () => rej(t.error);
+        t.onabort = () => rej(t.error || new Error("транзакция прервана")); // например, кончилось место
       })
   );
 }

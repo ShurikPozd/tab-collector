@@ -17,10 +17,25 @@ export function descLimit(mode, desc) {
 
 const LIMITS = { url: 2048, site: 100, kind: 32, kindLabel: 40, icon: 8, title: 300, meta: 300, description: 600, image: 2048 };
 
-export function clip(s, n) {
-  s = String(s || "").replace(/\s+/g, " ").trim();
+/** Строка без «половинок» эмодзи (одиночных суррогатов): бот и Telegram такие не принимают. */
+export function wellFormed(s) {
+  s = String(s ?? "");
+  return typeof s.toWellFormed === "function" ? s.toWellFormed() : s.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "\ufffd");
+}
+
+/** Обрезать до n символов, не разрывая эмодзи пополам. */
+export function cut(s, n) {
+  s = String(s ?? "");
   if (s.length <= n) return s;
-  return s.slice(0, Math.max(0, n - 1)).replace(/[\s,.;:—-]+$/, "") + "…";
+  let out = s.slice(0, n);
+  if (/[\ud800-\udbff]$/.test(out)) out = out.slice(0, -1); // первая половинка эмодзи — убираем
+  return out;
+}
+
+export function clip(s, n) {
+  s = wellFormed(String(s || "").replace(/\s+/g, " ").trim());
+  if (s.length <= n) return s;
+  return cut(s, Math.max(0, n - 1)).replace(/[\s,.;:—-]+$/, "") + "…";
 }
 
 /** Без «https://» и «www.» — как в превью (короче, Telegram всё равно делает ссылкой). */
@@ -84,11 +99,11 @@ export function listParts(items, title = "", descMax = LIST_DESC) {
 /** Одна ссылка в теле запроса — только поля контракта, обрезанные по лимитам. */
 export function payloadItem(item, mode = "each", desc) {
   const out = {
-    url: String(item.url).slice(0, LIMITS.url),
+    url: wellFormed(String(item.url)).slice(0, LIMITS.url),
     site: clip(item.siteLabel || item.site, LIMITS.site),
     kind: clip(item.kind || "page", LIMITS.kind),
     kindLabel: clip(item.kindLabel, LIMITS.kindLabel),
-    icon: String(item.icon || "").slice(0, LIMITS.icon),
+    icon: cut(wellFormed(item.icon || ""), LIMITS.icon),
     title: clip(item.title || item.url, LIMITS.title),
     meta: clip(item.meta, LIMITS.meta),
     // в списке бот всё равно показывает ~140 символов — не раздуваем запрос
@@ -115,13 +130,19 @@ export function batches(mode, items) {
     for (let i = 0; i < items.length; i += EACH_BATCH) out.push(items.slice(i, i + EACH_BATCH));
     return out;
   }
+  // размер считаем нарастающим итогом: оболочка запроса + каждая ссылка (с запятой)
+  const base = bodySize(payload("list", [], "x".repeat(120)));
   let cur = [];
+  let size = base;
   for (const it of items) {
-    const next = cur.concat(it);
-    if (cur.length && (next.length > LIST_MAX || bodySize(payload("list", next, "x".repeat(120))) > BODY_MAX)) {
+    const one = bodySize(payloadItem(it, "list")) + 1;
+    if (cur.length && (cur.length + 1 > LIST_MAX || size + one > BODY_MAX)) {
       out.push(cur);
-      cur = [it];
-    } else cur = next;
+      cur = [];
+      size = base;
+    }
+    cur.push(it);
+    size += one;
   }
   if (cur.length) out.push(cur);
   return out;

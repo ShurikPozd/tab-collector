@@ -8,6 +8,7 @@
 // Старый формат (весь список одним ключом items) переносится при первой записи.
 
 import { normalizeUrl, recognize, kindFromOgType, kindMeta } from "./url.js";
+import { clip } from "./format.js";
 
 const area = () => chrome.storage.local;
 
@@ -27,7 +28,7 @@ export function makeItem(tab, grab = {}, now = Date.now(), batch = null) {
     id: uid(),
     url: tab.url,
     nkey: normalizeUrl(tab.url),
-    title: search ? `«${search.q}»` : (grab.title || tab.title || tab.url).trim(),
+    title: clip(search ? `«${search.q}»` : grab.title || tab.title || tab.url, 300),
     favicon: tab.favIconUrl && /^https?:|^data:image\//.test(tab.favIconUrl) ? tab.favIconUrl : "",
     site: r.site,
     siteName: grab.siteName || "",
@@ -38,7 +39,7 @@ export function makeItem(tab, grab = {}, now = Date.now(), batch = null) {
     kindLabel: r.kindLabel,
     kindLocked: r.kind !== "page",
     meta: search ? `Поиск в ${search.engine}` : "",
-    description: desc.slice(0, 600),
+    description: clip(desc, 600),
     image: grab.image && /^https:\/\//.test(grab.image) ? grab.image : "",
     scrollY: Math.max(0, Math.round(grab.scrollY || 0)),
     folder: null,
@@ -73,10 +74,12 @@ async function readAll() {
  */
 export function cleanOrphans() {
   return navigator.locks.request("tc-store", async () => {
-    const all = await area().get(null);
-    if (!Array.isArray(all.order)) return 0;
-    const keep = new Set(all.order.map((id) => IT + id));
-    const drop = Object.keys(all).filter((k) => (k.startsWith(IT) && !keep.has(k)) || k === "items");
+    // только ключи, без самих записей (getKeys — Chrome 130+; иначе читаем всё)
+    const keys = typeof area().getKeys === "function" ? await area().getKeys() : Object.keys(await area().get(null));
+    const { order } = await area().get("order");
+    if (!Array.isArray(order)) return 0;
+    const keep = new Set(order.map((id) => IT + id));
+    const drop = keys.filter((k) => (k.startsWith(IT) && !keep.has(k)) || k === "items");
     if (drop.length) await area().remove(drop);
     return drop.length;
   });
@@ -200,9 +203,11 @@ export function restoreItems(removed) {
   });
 }
 
+/** Настройки — отдельной записью (без чтения всего списка: щелчок «Плитки/Список» не тормозит). */
 export function saveSettings(patch) {
-  return update((d) => {
-    d.settings = { ...d.settings, ...patch };
+  return navigator.locks.request("tc-store", async () => {
+    const settings = (await area().get("settings")).settings || {};
+    await area().set({ settings: { ...settings, ...patch } });
   });
 }
 
