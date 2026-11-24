@@ -125,7 +125,11 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
     done++;
     const partTitle = mode === "list" && total > 1 ? `${title || "Список ссылок"} (${done}/${total})` : title;
     onStep && onStep({ sent, total: good.length, waiting: 0 });
-    const r = await post("/api/save-links", payload(mode, part, partTitle, desc), s, undefined, signal);
+    const body = payload(mode, part, partTitle, desc);
+    // сознательная повторная отправка уже отправленных — новый пост (бот иначе ответит «уже есть»);
+    // повтор после сбоя (ссылки ещё не отмечены) — тот же ключ, и бот не создаст второй пост
+    if (body.batchKey && part.every((it) => it.sentAt)) body.batchKey += `-r${Date.now().toString(36)}`;
+    const r = await post("/api/save-links", body, s, undefined, signal);
     if (r.aborted || aborted()) break;
     const retryAfter = Math.max(5, Number((r.data && r.data.retryAfter) || 0));
 
@@ -169,9 +173,16 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
         sent++;
       });
     } else {
+      // бот не смог записать часть списка в архив — не считаем отправленным: ссылки останутся
+      // в «Не отправлены», и повтор их досохранит
+      if (Number(r.data.unsaved) > 0) {
+        out.error = "Бот не смог сохранить часть списка в архив — ссылки остались в «Не отправлены». Попробуйте отправить ещё раз.";
+        break;
+      }
       out.posts += Number(r.data.parts) || 1;
-      for (const it of part) batch.set(it.id, { status: "saved", category: r.data.category, icon: r.data.icon });
-      out.saved += part.length;
+      if (r.data.status === "exists") out.exists += part.length;
+      for (const it of part) batch.set(it.id, { status: r.data.status === "exists" ? "exists" : "saved", category: r.data.category, icon: r.data.icon });
+      if (r.data.status !== "exists") out.saved += part.length;
       sent += part.length;
     }
     for (const [id, x] of batch) out.results.set(id, x);

@@ -23,7 +23,12 @@ async function remember(patch) {
  * Отправить копию. manual — по кнопке (бот подпишет «по кнопке»).
  * Возвращает { ok, text } — понятный итог на «вы».
  */
-export async function sendBackup({ manual = false } = {}) {
+export function sendBackup(opts = {}) {
+  // одна копия за раз (будильник, «после сбора» и кнопка могут совпасть)
+  return navigator.locks.request("tc-backup", { ifAvailable: true }, (lock) => (lock ? sendBackupNow(opts) : { ok: true, text: "Копия уже отправляется." }));
+}
+
+async function sendBackupNow({ manual = false } = {}) {
   const s = await botSettings();
   if (!s.token) return { ok: false, text: "Впишите секрет бота — без него копию не отправить." };
   const data = await exportData();
@@ -31,6 +36,8 @@ export async function sendBackup({ manual = false } = {}) {
   const ver = chrome.runtime.getManifest().version;
   const q = new URLSearchParams({ app: "tab-collector", ver, links: String(data.items.length), folders: String(data.folders.length), manual: manual ? "1" : "0" });
   let r;
+  // бот на Render может просыпаться до минуты — не даём фону уснуть, пока ждём ответа
+  const keep = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), 20000);
   try {
     r = await fetch(`${s.baseUrl}/api/backup?${q}`, {
       method: "POST",
@@ -41,6 +48,8 @@ export async function sendBackup({ manual = false } = {}) {
   } catch (e) {
     await remember({ lastError: "нет связи с ботом", lastTryAt: Date.now() });
     return { ok: false, text: "Нет связи с ботом — копия не отправлена, попробую позже." };
+  } finally {
+    clearInterval(keep);
   }
   if (r.ok) {
     await remember({ lastAt: Date.now(), lastLinks: data.items.length, lastError: "", lastTryAt: Date.now() });

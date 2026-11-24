@@ -2096,7 +2096,8 @@ mark {
     border-radius: 999px;
   }
   .side-nav .nav-site,
-  .side-nav .nav-folder {
+  .side-nav .nav-folder,
+  .side-nav .nav-mark {
     display: none;
   }
   .side-nav .nav-item .n-label,

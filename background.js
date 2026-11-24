@@ -39,7 +39,7 @@ async function devAutoReload() {
     if (!disk || !disk.version || disk.version === chrome.runtime.getManifest().version) return;
     // не посреди отправки в бота или сбора: иначе отправленное не отметится и уйдёт второй раз
     const { held } = await navigator.locks.query();
-    if (held.some((l) => l.name === "tc-send" || l.name === "tc-collect" || l.name === "tc-store")) return;
+    if (held.some((l) => ["tc-send", "tc-collect", "tc-store", "tc-backup"].includes(l.name))) return;
     chrome.runtime.reload();
   } catch (e) {
     /* файл в процессе записи — проверим в следующий раз */
@@ -186,7 +186,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       let index = base ? base.index + 1 : undefined;
       for (const it of msg.items) {
         if (!/^(https?|file|ftp):/i.test(it.url || "")) continue; // javascript:, chrome:// и т.п. не открываем
-        const already = openByKey.get(normalizeUrl(it.url));
+        // force — «Вернуть» после «Закрыть дубли»: открыть копию, хоть такая страница и открыта
+        const already = msg.force ? null : openByKey.get(normalizeUrl(it.url));
         if (already) {
           // одна ссылка — переключаемся на её вкладку; из нескольких — просто не открываем вторую копию
           if (msg.items.length === 1) await focusTab(already.id);
@@ -322,15 +323,41 @@ async function schedule() {
 }
 chrome.runtime.onInstalled.addListener(() => schedule().catch(() => {}));
 chrome.runtime.onStartup.addListener(() => schedule().catch(() => {}));
+schedule().catch(() => {}); // и при каждом пробуждении фона (выключили и включили расширение — будильники вернутся)
+
+// мессенджеры, созвоны, почта: в фоне ждут сообщений и звонков — их не усыпляем
+const KEEP_AWAKE = /(^|\.)(web\.telegram\.org|web\.whatsapp\.com|discord\.com|app\.slack\.com|meet\.google\.com|zoom\.us|teams\.microsoft\.com|teams\.live\.com|vk\.com|web\.max\.ru|mail\.google\.com|mail\.yandex\.ru|e\.mail\.ru|outlook\.live\.com|outlook\.office\.com)$/i;
+
+// когда вы ушли с вкладки: lastAccessed у Chrome — время, когда на неё пришли
+async function noteLeave(windowId, newTabId) {
+  const k = `act:${windowId}`;
+  const prev = (await chrome.storage.session.get(k))[k];
+  const set = { [k]: newTabId };
+  if (prev != null && prev !== newTabId) set[`left:${prev}`] = Date.now();
+  await chrome.storage.session.set(set);
+}
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => noteLeave(windowId, tabId).catch(() => {}));
+chrome.tabs.onRemoved.addListener((id) => chrome.storage.session.remove(`left:${id}`).catch(() => {}));
 
 async function autoSleep() {
   const st = await loadSettings();
   const hours = Number(st.autoSleepHours) || 0;
   if (hours <= 0) return;
   const old = Date.now() - hours * 3600 * 1000;
-  const tabs = (await chrome.tabs.query({ windowType: "normal" })).filter(
-    (t) => !t.active && !t.discarded && !t.pinned && !t.audible && t.lastAccessed && t.lastAccessed < old && !untouchable(t, EXT)
-  );
+  const all = await chrome.tabs.query({ windowType: "normal" });
+  const left = await chrome.storage.session.get(all.map((t) => `left:${t.id}`));
+  const tabs = all.filter((t) => {
+    if (t.active || t.discarded || t.pinned || t.audible || untouchable(t, EXT)) return false;
+    let host = "";
+    try {
+      host = new URL(t.url).hostname;
+    } catch (e) {
+      /* пусто */
+    }
+    if (KEEP_AWAKE.test(host)) return false;
+    const last = Math.max(t.lastAccessed || 0, left[`left:${t.id}`] || 0);
+    return last > 0 && last < old;
+  });
   if (tabs.length) await sleepTabs(tabs); // проверит черновики сама
 }
 

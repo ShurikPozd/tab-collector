@@ -214,7 +214,9 @@ function keepFocus(root, paint) {
             ? `[data-f="${CSS.escape(host.dataset.f)}"]`
             : host.classList.contains("nav-folders-btn")
               ? ".nav-folders-btn"
-              : ".nav-sites-btn");
+              : host.classList.contains("nav-marks-btn")
+                ? ".nav-marks-btn"
+                : ".nav-sites-btn");
   const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
   paint();
   if (!key) return;
@@ -321,6 +323,7 @@ async function reloadItems() {
   const ids = new Set(st.items.map((it) => it.id));
   for (const id of st.libSel) if (!ids.has(id)) st.libSel.delete(id);
   if (st.filter.type === "folder" && !st.folders.some((f) => f.id === st.filter.id)) st.filter = { type: "all" };
+  if (st.filter.type === "mark" && !st.items.some((it) => it.mark === st.filter.mark)) st.filter = { type: "all" };
 }
 
 async function reloadTabs() {
@@ -589,24 +592,36 @@ function bindOpen() {
     st.collecting = true;
     renderOpen();
     const closed = [];
+    let skipped = 0;
     try {
-      for (const t of list) {
-        if ((await draftIn(t)) !== "no") continue; // недописанный текст (или не успели проверить) — не трогаем
-        try {
-          await chrome.tabs.remove(t.id);
-          closed.push(t);
-        } catch (e) {
-          /* уже закрыта */
+      // пока было открыто окно подтверждения, вкладки могли измениться — пересчитываем по свежему списку
+      await reloadTabs();
+      const fresh = findDuplicates(st.tabs.filter((t) => tabState(t) === ""), normalizeUrl).close;
+      const queue = fresh.slice();
+      const worker = async () => {
+        while (queue.length) {
+          const t = queue.shift();
+          if ((await draftIn(t)) !== "no") {
+            skipped++; // недописанный текст (или не успели проверить) — не трогаем
+            continue;
+          }
+          try {
+            await chrome.tabs.remove(t.id);
+            closed.push(t);
+          } catch (e) {
+            /* уже закрыта */
+          }
         }
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(8, queue.length) }, worker));
     } finally {
       st.collecting = false;
       await reloadTabs();
       renderOpen();
     }
-    const kept = list.length - closed.length;
-    toast(`Закрыто дублей: ${closed.length}${kept ? ` (${kept} с недописанным текстом оставлены)` : ""}`, async () => {
-      await chrome.runtime.sendMessage({ type: "open", items: closed.map((t) => ({ url: t.url })), lazy: true, windowId: st.myWindowId }).catch(() => {});
+    toast(`Закрыто дублей: ${closed.length}${skipped ? ` (${skipped} с недописанным текстом оставлены)` : ""}`, async () => {
+      // force: такая страница открыта (оставленная копия), но вернуть нужно именно закрытые копии
+      await chrome.runtime.sendMessage({ type: "open", items: closed.map((t) => ({ url: t.url })), lazy: true, force: true, windowId: st.myWindowId }).catch(() => {});
     });
   });
 
@@ -659,7 +674,8 @@ function navItem(f, label, count, lead = "", sub = false, extra = "") {
   const cur =
     st.filter.type === f.type &&
     (f.type !== "folder" || st.filter.id === f.id) &&
-    (f.type !== "site" || (st.filter.site === f.site && (st.filter.kind || "") === (f.kind || "")));
+    (f.type !== "site" || (st.filter.site === f.site && (st.filter.kind || "") === (f.kind || ""))) &&
+    (f.type !== "mark" || st.filter.mark === f.mark);
   return `<button type="button" class="nav-item${sub ? " sub" : ""}${extra ? " " + extra : ""}" aria-current="${cur}" title="${esc(label)}" aria-label="${esc(`${label}: ${count}`)}" data-f='${esc(JSON.stringify(f))}'>
     ${lead || "<span></span>"}<span class="n-label">${esc(label)}</span><span class="n-count">${count}</span></button>`;
 }
@@ -728,8 +744,8 @@ function renderSide() {
     keepFocus($("side-nav"), () => ($("side-nav").innerHTML = h));
     // меню «Папки»/«Сайты» открыто — его кнопка пересоздана: привязываем к новой
     const menu = $("folder-menu");
-    if (!menu.hidden && (menu.dataset.kind === "folder-pick" || menu.dataset.kind === "sites")) {
-      const btn = $("side-nav").querySelector(menu.dataset.kind === "sites" ? ".nav-sites-btn" : ".nav-folders-btn");
+    if (!menu.hidden && ["folder-pick", "sites", "mark-pick"].includes(menu.dataset.kind)) {
+      const btn = $("side-nav").querySelector({ sites: ".nav-sites-btn", "folder-pick": ".nav-folders-btn", "mark-pick": ".nav-marks-btn" }[menu.dataset.kind]);
       if (btn) {
         menuOpener = btn;
         btn.setAttribute("aria-expanded", "true");

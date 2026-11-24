@@ -1,6 +1,6 @@
 // Окно «Настройки»: тема, адрес и секрет бота, проверка связи, резервная копия списка.
 
-import { load, saveSettings, exportData, importData } from "../core/store.js";
+import { load, loadSettings, saveSettings, exportData, importData } from "../core/store.js";
 import { botSettings, ping } from "../core/bot.js";
 import { DEFAULTS } from "../config.js";
 import { clearShots, countShots } from "../core/shots.js";
@@ -36,7 +36,7 @@ function applyAutoSleep(h) {
 }
 
 async function backupStatus(text, ok) {
-  const s = (await load()).settings;
+  const s = await loadSettings();
   $("set-autobackup").checked = s.autoBackup !== false;
   const b = s.backup || {};
   const el = $("backup-status");

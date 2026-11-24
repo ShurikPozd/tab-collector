@@ -107,6 +107,13 @@ await t("загрузка копии: только веб-адреса, без �
   assert.deepEqual(d.folders.map((f) => f.id), ["f1"]);
 });
 
+await t("копия сохраняет отметку «хочу / смотрю / готово»", async () => {
+  await importData({ items: [{ url: "https://m.ru/1", title: "M", mark: "done" }, { url: "https://m.ru/2", title: "M2", mark: "<b>" }], folders: [] });
+  const d = await load();
+  assert.equal(d.items.find((i) => i.url === "https://m.ru/1").mark, "done");
+  assert.equal(d.items.find((i) => i.url === "https://m.ru/2").mark, undefined);
+});
+
 await t("копия сохраняет пометку сбора (batch)", async () => {
   const n = await importData({ items: [{ url: "https://c.ru/1", title: "C", addedAt: 1000, batch: 1000 }], folders: [] });
   assert.equal(n, 1);
