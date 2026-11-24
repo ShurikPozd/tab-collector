@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf, siteLabel, providerForSite, siteTitle } from "../core/url.js";
 import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit, clip } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
-import { anilibriaPatch, mangalibPatch, mangalibMetaPatch, webtoonPatch, rutubePatch, hhPagePatch, metaTags, jsonLd, decodeEntities, duration } from "../core/enrich.js";
+import { anilibriaPatch, mangalibPatch, mangalibMetaPatch, webtoonPatch, rutubePatch, hhPagePatch, metaTags, jsonLd, decodeEntities, duration, htmlText } from "../core/enrich.js";
 import { sendable } from "../core/bot.js";
 import { findDuplicates } from "../core/dups.js";
 import { markLabel } from "../core/marks.js";
@@ -499,6 +499,27 @@ t("ошибки бота — по-русски", () => {
   assert.equal(linksWord(3), "3 ссылки");
   assert.equal(linksWord(11), "11 ссылок");
   assert.equal(linksWord(22), "22 ссылки");
+});
+
+t("разборщики новых сайтов не падают на пустых ответах", () => {
+  assert.equal(anilibriaPatch(null, "https://anilibria.top/").title, "");
+  assert.equal(anilibriaPatch({ genres: [null], name: { main: "Фрирен" } }, "https://anilibria.top/", { ordinal: undefined }).title, "");
+  assert.equal(anilibriaPatch({ name: { main: "Фрирен" } }, "https://anilibria.top/", { ordinal: 3 }).title, "Фрирен — серия 3");
+  assert.equal(anilibriaPatch({ name: {} }, "https://anilibria.top/", { ordinal: 3 }).title, "");
+  assert.doesNotThrow(() => mangalibPatch({ genres: [null], authors: [null] }));
+  assert.doesNotThrow(() => mangalibPatch(null));
+  assert.doesNotThrow(() => rutubePatch(null));
+});
+t("описания без разметки, даже заэкранированной дважды", () => {
+  assert.equal(htmlText("&lt;p&gt;Опыт &lt;b&gt;3&lt;/b&gt; года&lt;/p&gt;"), "Опыт 3 года");
+  assert.equal(htmlText("<p>a &amp; b</p>"), "a & b");
+  assert.equal(rutubePatch({ description: "<b>Жирный</b>  текст" }).description, "Жирный текст");
+});
+t("hh.ru без schema.org: должность не обрезается", () => {
+  const page = (x) => `<meta property="og:title" content="${x}">`;
+  assert.equal(hhPagePatch(page("Вакансия Менеджер в отдел продаж в Москве, работа в компании Ромашка")).title, "Менеджер в отдел продаж");
+  assert.equal(hhPagePatch(page("Вакансия Python разработчик в Санкт-Петербурге, работа в компании Х")).title, "Python разработчик");
+  assert.equal(hhPagePatch(page("Вакансия Python разработчик в Нижнем Новгороде, работа в компании Х")).title, "Python разработчик");
 });
 
 console.log(`\n${ok} OK, ${fail} FAIL`);

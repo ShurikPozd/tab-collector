@@ -336,7 +336,11 @@ async function noteLeave(windowId, newTabId) {
   if (prev != null && prev !== newTabId) set[`left:${prev}`] = Date.now();
   await chrome.storage.session.set(set);
 }
-chrome.tabs.onActivated.addListener(({ tabId, windowId }) => noteLeave(windowId, tabId).catch(() => {}));
+// по очереди: при быстром Ctrl+Tab вызовы читали бы одно и то же «прошлое» и теряли время ухода
+let leaveChain = Promise.resolve();
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  leaveChain = leaveChain.then(() => noteLeave(windowId, tabId)).catch(() => {});
+});
 chrome.tabs.onRemoved.addListener((id) => chrome.storage.session.remove(`left:${id}`).catch(() => {}));
 
 async function autoSleep() {

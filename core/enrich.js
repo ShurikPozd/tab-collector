@@ -162,14 +162,15 @@ export function decodeEntities(s) {
   });
 }
 
-/** HTML → чистый текст (описание вакансии и т.п.). */
+const stripTags = (s) =>
+  String(s || "")
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<\/?(p|div|li|br|ul|ol|h\d)\b[^>]*>/gi, " ")
+    .replace(/<\/?[a-z][^>]*>/gi, "");
+
+/** HTML → чистый текст (описание вакансии и т.п.). Дважды: разметка бывает заэкранирована ещё раз. */
 export function htmlText(s) {
-  return decodeEntities(
-    String(s || "")
-      .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<\/?(p|div|li|br|ul|ol|h\d)\b[^>]*>/gi, " ")
-      .replace(/<[^>]+>/g, "")
-  )
+  return stripTags(decodeEntities(stripTags(s)))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -222,20 +223,23 @@ const ALIB_TYPE = { TV: "ТВ", ONA: "ONA", OVA: "OVA", WEB: "web", MOVIE: "фи
 
 /** Ответ api/v1/anime/releases/<код> (или release внутри серии) → поля записи. ep — серия, если ссылка на неё. */
 export function anilibriaPatch(d, api, ep) {
+  d = d || {};
   const name = d.name || {};
   const total = d.episodes_total || (Array.isArray(d.episodes) ? d.episodes.length : 0);
   const type = (d.type && (ALIB_TYPE[d.type.value] || d.type.description || d.type.value)) || "";
   const season = d.season && d.season.description ? `${d.season.description.toLowerCase()} ${d.year || ""}`.trim() : d.year;
   const status = d.is_ongoing ? "выходит" : d.is_in_production ? "анонс" : total ? "вышло" : "";
   const rating = d.shikimori && d.shikimori.rating ? score(d.shikimori.rating) : "";
-  const genres = (d.genres || []).map((g) => String(g.name || "").toLowerCase()).filter(Boolean).slice(0, 3).join(", ");
+  const genres = (d.genres || []).map((g) => String((g && g.name) || "").toLowerCase()).filter(Boolean).slice(0, 3).join(", ");
   const poster = d.poster && (d.poster.src || d.poster.preview);
   const image = poster ? new URL(poster, api).href : "";
   const meta = joinMeta([season, [type, count(total, "эп.")].filter(Boolean).join(", "), status, rating, genres]);
-  const description = clip(String(d.description || "").replace(/\s+/g, " ").trim(), 600);
+  const description = clip(htmlText(d.description), 600);
   const title = name.main || name.english || "";
   if (ep) {
-    return { title: `${title} — серия ${ep.ordinal}`, meta: joinMeta([ep.name ? `«${ep.name}»` : "", meta]), description, image };
+    // без названия тайтла или номера серии название вкладки лучше, чем « — серия undefined»
+    const epTitle = title && ep.ordinal != null && ep.ordinal !== "" ? `${title} — серия ${ep.ordinal}` : "";
+    return { title: epTitle, meta: joinMeta([ep.name ? `«${ep.name}»` : "", meta]), description, image };
   }
   return { title, meta, description, image };
 }
@@ -252,15 +256,16 @@ function docText(n) {
 
 /** Ответ api2.mangalib.me/api/manga/<id--slug> → поля записи. */
 export function mangalibPatch(d) {
+  d = d || {};
   const ch = d.items_count && d.items_count.uploaded;
   const kind = [d.type && String(d.type.label || "").toLowerCase(), count(ch, "гл.")].filter(Boolean).join(", ");
-  const author = (d.authors || []).map((a) => a.rus_name || a.name).filter(Boolean)[0];
-  const genres = (d.genres || []).map((g) => String(g.name || "").toLowerCase()).filter(Boolean).slice(0, 3).join(", ");
+  const author = (d.authors || []).map((a) => a && (a.rus_name || a.name)).filter(Boolean)[0];
+  const genres = (d.genres || []).map((g) => String((g && g.name) || "").toLowerCase()).filter(Boolean).slice(0, 3).join(", ");
   const rating = d.rating && (d.rating.averageFormated || d.rating.average);
   return {
     title: d.rus_name || d.eng_name || d.name,
     meta: joinMeta([year(d.releaseDate), kind, d.status && String(d.status.label || "").toLowerCase(), author, score(rating), genres]),
-    description: clip(docText(d.summary).replace(/\s+/g, " ").trim(), 600),
+    description: clip(htmlText(docText(d.summary)), 600),
     image: (d.cover && (d.cover.default || d.cover.md)) || "",
   };
 }
@@ -317,6 +322,7 @@ export function duration(sec) {
 
 /** Ответ rutube.ru/api/video/<id>/ → поля записи. */
 export function rutubePatch(d) {
+  d = d || {};
   const hits = Number(d.hits) || 0;
   return {
     title: d.title || "",
@@ -327,7 +333,7 @@ export function rutubePatch(d) {
       year(d.publication_ts || d.created_ts),
       d.category && d.category.name,
     ]),
-    description: clip(String(d.description || "").replace(/\s+/g, " ").trim(), 600),
+    description: clip(htmlText(d.description), 600),
     image: d.thumbnail_url || "",
   };
 }
@@ -362,8 +368,11 @@ export function hhPagePatch(html) {
     city = typeof addr === "string" ? addr : addr.addressLocality || "";
   }
   if (!title) {
-    // «Вакансия Python разработчик в Москве, работа в компании Х»
-    const m = String(tags["og:title"] || "").match(/^Вакансия\s+(.+?)(?:\s+в\s+[^,]+)?,\s+работа в компании\s+(.+)$/);
+    // «Вакансия Python разработчик в Москве, работа в компании Х». Город — с заглавной и последним
+    // перед запятой, иначе «Менеджер в отдел продаж в Москве» обрезалось бы до «Менеджер».
+    const m = String(tags["og:title"] || "").match(
+      /^Вакансия\s+(.+?)(?:\s+в\s+[А-ЯЁA-Z][^,\s]*(?:[\s-]+[А-ЯЁA-Z][^,\s]*)*)?,\s+работа в компании\s+(.+)$/
+    );
     if (!m) return null;
     [, title, company] = m;
   }

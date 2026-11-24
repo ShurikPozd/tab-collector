@@ -93,7 +93,7 @@ export async function load() {
  * Правила склейки менялись (0.3.2): у старых записей ключ пересчитываем один раз,
  * иначе та же ссылка, собранная снова, не узнаётся как уже собранная.
  */
-const KEYS_VERSION = 3;
+const KEYS_VERSION = 4; // 4: новые сайты (AniLibria, MangaLib, Webtoons, Rutube, hh.ru, Ozon)
 export async function migrateKeys() {
   if (((await loadSettings()).keysVersion || 0) >= KEYS_VERSION) return 0; // без чтения всей базы
   return update(async (d) => {
@@ -103,6 +103,13 @@ export async function migrateKeys() {
       const k = normalizeUrl(it.url);
       if (k !== it.nkey) {
         it.nkey = k;
+        n++;
+      }
+      // сайт, который раньше был «просто страницей», теперь распознаётся: тип и описание — заново
+      const r = recognize(it.url);
+      if (r.provider && r.provider !== "page" && (!it.provider || it.provider === "page")) {
+        Object.assign(it, { provider: r.provider, ref: r.ref, kind: r.kind, icon: r.icon, kindLabel: r.kindLabel, kindLocked: true });
+        if (r.kind !== "search") it.enrich = "pending";
         n++;
       }
     }

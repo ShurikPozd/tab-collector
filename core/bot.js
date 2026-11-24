@@ -3,7 +3,7 @@
 
 import { DEFAULTS } from "../config.js";
 import { loadSettings } from "./store.js";
-import { payload, batches, botError } from "./format.js";
+import { payload, batches, botError, batchKey, clip } from "./format.js";
 
 let localCfg = null;
 async function localConfig() {
@@ -128,7 +128,11 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
     const body = payload(mode, part, partTitle, desc);
     // сознательная повторная отправка уже отправленных — новый пост (бот иначе ответит «уже есть»);
     // повтор после сбоя (ссылки ещё не отмечены) — тот же ключ, и бот не создаст второй пост
-    if (body.batchKey && part.every((it) => it.sentAt)) body.batchKey += `-r${Date.now().toString(36)}`;
+    // ключ — без номера части «(2/3)»: при повторе части могут перенумероваться
+    if (body.batchKey) body.batchKey = batchKey(body.items.map((x) => x.url), clip(title || "", 120));
+    // суффикс — по времени прошлой отправки, а не по текущему: если ответ бота потерялся,
+    // следующая попытка даст тот же ключ, и второго поста не будет
+    if (body.batchKey && part.every((it) => it.sentAt)) body.batchKey += `-r${Math.max(...part.map((it) => +it.sentAt || 0)).toString(36)}`;
     const r = await post("/api/save-links", body, s, undefined, signal);
     if (r.aborted || aborted()) break;
     const retryAfter = Math.max(5, Number((r.data && r.data.retryAfter) || 0));
@@ -176,10 +180,12 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
       // бот не смог записать часть списка в архив — не считаем отправленным: ссылки останутся
       // в «Не отправлены», и повтор их досохранит
       if (Number(r.data.unsaved) > 0) {
-        out.error = "Бот не смог сохранить часть списка в архив — ссылки остались в «Не отправлены». Попробуйте отправить ещё раз.";
+        out.error = part.every((it) => it.sentAt)
+          ? "Бот не смог сохранить часть списка в архив. Попробуйте отправить ещё раз."
+          : "Бот не смог сохранить часть списка в архив — ссылки остались в «Не отправлены». Попробуйте отправить ещё раз.";
         break;
       }
-      out.posts += Number(r.data.parts) || 1;
+      if (r.data.status !== "exists") out.posts += Number(r.data.parts) || 1; // повтор — без нового поста
       if (r.data.status === "exists") out.exists += part.length;
       for (const it of part) batch.set(it.id, { status: r.data.status === "exists" ? "exists" : "saved", category: r.data.category, icon: r.data.icon });
       if (r.data.status !== "exists") out.saved += part.length;

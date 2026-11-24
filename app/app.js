@@ -593,18 +593,25 @@ function bindOpen() {
     renderOpen();
     const closed = [];
     let skipped = 0;
+    let unknown = 0;
     try {
-      // пока было открыто окно подтверждения, вкладки могли измениться — пересчитываем по свежему списку
+      // пока было открыто окно подтверждения, вкладки могли измениться — пересчитываем по свежему
+      // списку, но закрываем только те, что были в подтверждённом числе
+      const agreed = new Set(list.map((t) => t.id));
       await reloadTabs();
-      const fresh = findDuplicates(st.tabs.filter((t) => tabState(t) === ""), normalizeUrl).close;
+      const fresh = findDuplicates(st.tabs.filter((t) => tabState(t) === ""), normalizeUrl).close.filter((t) => agreed.has(t.id));
       const queue = fresh.slice();
       const worker = async () => {
         while (queue.length) {
           const t = queue.shift();
-          if ((await draftIn(t)) !== "no") {
-            skipped++; // недописанный текст (или не успели проверить) — не трогаем
+          const d = await draftIn(t);
+          if (d !== "no") {
+            d === "yes" ? skipped++ : unknown++; // недописанный текст или не успели проверить — не трогаем
             continue;
           }
+          // пока проверяли, на вкладку могли перейти или открыть в ней другую страницу
+          const now = await chrome.tabs.get(t.id).catch(() => null);
+          if (!now || now.active || now.url !== t.url) continue;
           try {
             await chrome.tabs.remove(t.id);
             closed.push(t);
@@ -619,7 +626,8 @@ function bindOpen() {
       await reloadTabs();
       renderOpen();
     }
-    toast(`Закрыто дублей: ${closed.length}${skipped ? ` (${skipped} с недописанным текстом оставлены)` : ""}`, async () => {
+    const kept = [skipped && `${skipped} с недописанным текстом`, unknown && `${unknown} не удалось проверить`].filter(Boolean).join(", ");
+    toast(`Закрыто дублей: ${closed.length}${kept ? ` (оставлены: ${kept})` : ""}`, async () => {
       // force: такая страница открыта (оставленная копия), но вернуть нужно именно закрытые копии
       await chrome.runtime.sendMessage({ type: "open", items: closed.map((t) => ({ url: t.url })), lazy: true, force: true, windowId: st.myWindowId }).catch(() => {});
     });
@@ -720,7 +728,11 @@ function renderSide() {
   const labelCount = new Map();
   for (const [site, s] of siteList) labelCount.set(baseLabel(site, s), (labelCount.get(baseLabel(site, s)) || 0) + 1);
   // две «Википедии» (ru и en) — с адресом, чтобы отличать
-  const labelOf = (site, s) => (labelCount.get(baseLabel(site, s)) > 1 ? `${baseLabel(site, s)} · ${site}` : baseLabel(site, s));
+  // имя совпадает с адресом (hh.ru и spb.hh.ru) — адрес вместо «hh.ru · hh.ru»
+  const labelOf = (site, s) => {
+    const b = baseLabel(site, s);
+    return labelCount.get(b) > 1 ? (b === site ? site : `${b} · ${site}`) : b;
+  };
   st.siteList = siteList.map(([site, s]) => ({ site, label: labelOf(site, s), n: s.n, sample: s.sample }));
   // на узком экране сайты — не длинной лентой, а одной кнопкой с меню
   if (sites.size) {

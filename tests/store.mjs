@@ -27,7 +27,7 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true,
 });
 
-const { load, addItems, patchItems, removeItems, restoreItems, makeItem, importData, cleanOrphans } = await import("../core/store.js");
+const { load, addItems, patchItems, removeItems, restoreItems, makeItem, importData, cleanOrphans, migrateKeys } = await import("../core/store.js");
 
 let ok = 0;
 let fail = 0;
@@ -118,6 +118,21 @@ await t("копия сохраняет пометку сбора (batch)", async
   const n = await importData({ items: [{ url: "https://c.ru/1", title: "C", addedAt: 1000, batch: 1000 }], folders: [] });
   assert.equal(n, 1);
   assert.equal((await load()).items.find((i) => i.url === "https://c.ru/1").batch, 1000);
+});
+
+await t("новые сайты: старые записи распознаются заново (ключ, тип, описание)", async () => {
+  const url = "https://rutube.ru/video/0123456789abcdef0123456789abcdef/";
+  const it = makeItem({ url, title: "Видео" }, {}, 1);
+  await addItems([it]);
+  await patchItems([it.id], () => ({ provider: null, ref: null, kind: "page", nkey: "rutube.ru/video/0123456789abcdef0123456789abcdef", enrich: "done" }));
+  mem.settings = { ...(mem.settings || {}), keysVersion: 3 };
+  assert.ok((await migrateKeys()) > 0);
+  const got = (await load()).items.find((x) => x.id === it.id);
+  assert.equal(got.provider, "rutube");
+  assert.equal(got.nkey, it.nkey);
+  assert.equal(got.enrich, "pending");
+  assert.equal(await migrateKeys(), 0); // второй раз — ничего
+  await removeItems([it.id]);
 });
 
 console.log(`${ok} OK, ${fail} FAIL (хранилище)`);

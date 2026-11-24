@@ -179,7 +179,10 @@ async function go() {
     if (res.saved) parts.push(`сохранено ${res.saved}`);
     if (res.exists) parts.push(`уже были в архиве ${res.exists}`);
     if (res.failed) parts.push(`не получилось ${res.failed}`);
-  } else if (res.saved) parts.push(`${linksWord(res.saved)} — ${res.posts > 1 ? `${res.posts} ${res.posts < 5 ? "поста" : "постов"}` : "одним постом"}`);
+  } else {
+    if (res.saved) parts.push(`${linksWord(res.saved)} — ${res.posts > 1 ? `${res.posts} ${res.posts < 5 ? "поста" : "постов"}` : "одним постом"}`);
+    if (res.exists) parts.push(`${linksWord(res.exists)} — этот список бот уже получал, второй пост не нужен`);
+  }
   if (res.skipped) parts.push(`пропущено ${res.skipped} (не веб-адреса или слишком длинные)`);
   const summary = parts.join(", ");
   if (res.stopped) status(`Остановлено.${summary ? ` ${summary[0].toUpperCase()}${summary.slice(1)}.` : ""} Остальные ссылки — в разделе «Не отправлены».`);
