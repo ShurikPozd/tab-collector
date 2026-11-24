@@ -1,0 +1,163 @@
+{
+ "data": {
+  "id": 1773,
+  "name": "Wind Breaker",
+  "rus_name": "Ветролом",
+  "eng_name": "Wind Breaker",
+  "model": "manga",
+  "slug": "wind-breaker",
+  "slug_url": "1773--wind-breaker",
+  "cover": {
+   "filename": "1879304e-ac22-4ab9-a41c-69a4dbcecfd8",
+   "thumbnail": "https://cover.mangalib.me/uploads/cover/wind-breaker/cover/1879304e-ac22-4ab9-a41c-69a4dbcecfd8_thumb.jpg",
+   "default": "https://cover.mangalib.me/uploads/cover/wind-breaker/cover/1879304e-ac22-4ab9-a41c-69a4dbcecfd8.jpg",
+   "md": "https://cover.mangalib.me/uploads/cover/wind-breaker/cover/1879304e-ac22-4ab9-a41c-69a4dbcecfd8.jpg"
+  },
+  "ageRestriction": {
+   "id": 4,
+   "label": "18+"
+  },
+  "site": 1,
+  "type": {
+   "id": 5,
+   "label": "Манхва"
+  },
+  "summary": {
+   "type": "doc",
+   "content": [
+    {
+     "type": "paragraph",
+     "content": [
+      {
+       "type": "text",
+       "text": "Манхва «Ветролом» — драма о юных уличных гонщиках, мечтающих о свободе.Главный герой Джахён Чо — сын успешных родителей и лучший ученик в своей школе. Он никогда не знал, что значит «бороться за свою мечту», ведь вся его жизнь определялась родителями, которые хотят для сына только одного — успешного окончания школы.\nНо однажды Джахён, с детства любящий велоспорт, оказывается втянут в деятельность местных гонщиков, что заставляет героя пересмотреть приоритеты родителей и прислушаться к себе, ведь на своём новом пути он обретает друзей, любовь и приключения."
+      }
+     ]
+    }
+   ]
+  },
+  "releaseDate": "2013",
+  "is_licensed": false,
+  "genres": [
+   {
+    "id": 34,
+    "name": "Боевик",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 43,
+    "name": "Драма",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 47,
+    "name": "Комедия",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 52,
+    "name": "Повседневность",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 54,
+    "name": "Приключения",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 56,
+    "name": "Романтика",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 61,
+    "name": "Сёнэн",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 63,
+    "name": "Спорт",
+    "adult": false,
+    "alert": false
+   },
+   {
+    "id": 70,
+    "name": "Школа",
+    "adult": false,
+    "alert": false
+   }
+  ],
+  "authors": [
+   {
+    "id": 703,
+    "name": "JO Yongseok",
+    "rus_name": null,
+    "slug_url": "703--jo-yongseok"
+   }
+  ],
+  "content_marking": [
+   {
+    "id": 1,
+    "label": "Содержит нецензурную брань",
+    "formulation": "Содержит нецензурную брань"
+   },
+   {
+    "id": 2,
+    "label": "Содержит упоминание наркотиков",
+    "formulation": "Незаконное потребление наркотических средств, психотропных веществ, их аналогов причиняет вред здоровью, их незаконный оборот запрещен и влечет установленную законодательством ответственность"
+   }
+  ],
+  "status": {
+   "id": 5,
+   "label": "Выпуск прекращён"
+  },
+  "items_count": {
+   "uploaded": 561,
+   "total": 0
+  },
+  "format": [
+   {
+    "id": 4,
+    "slug": "colored",
+    "name": "В цвете",
+    "short_name": null,
+    "pivot": {
+     "manga_id": 1773,
+     "format_id": 4
+    }
+   },
+   {
+    "id": 6,
+    "slug": "web",
+    "name": "Веб",
+    "short_name": null,
+    "pivot": {
+     "manga_id": 1773,
+     "format_id": 6
+    }
+   },
+   {
+    "id": 7,
+    "slug": "webtun",
+    "name": "Вебтун",
+    "short_name": null,
+    "pivot": {
+     "manga_id": 1773,
+     "format_id": 7
+    }
+   }
+  ],
+  "releaseDateString": "2013 г."
+ },
+ "meta": {
+  "country": "US"
+ },
+ "server": "debian-files1"
+}

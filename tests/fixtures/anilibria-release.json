@@ -1,0 +1,133 @@
+{
+ "id": 10329,
+ "type": {
+  "value": "TV",
+  "description": "ТВ"
+ },
+ "year": 2026,
+ "name": {
+  "main": "Некий ITEM тёмной стороны",
+  "english": "Toaru Anbu no Item",
+  "alternative": null
+ },
+ "alias": "toaru-anbu-no-item",
+ "season": {
+  "value": "autumn",
+  "description": "Осень"
+ },
+ "shikimori": {
+  "id": 61014,
+  "url": "https://shikimori.io/animes/61014",
+  "votes": 186,
+  "rating": 7.69
+ },
+ "mal": {
+  "id": 61014,
+  "url": "https://myanimelist.net/anime/61014",
+  "votes": 3069,
+  "rating": 7.39
+ },
+ "rating": {
+  "average": 8.91,
+  "votes": 11,
+  "distribution": {
+   "1": 0,
+   "2": 0,
+   "3": 1,
+   "4": 0,
+   "5": 0,
+   "6": 0,
+   "7": 0,
+   "8": 1,
+   "9": 3,
+   "10": 6
+  }
+ },
+ "poster": {
+  "src": "/storage/releases/posters/10329/HkOfY3XFdQytm3vAzpaQDoSX1vOQt1Hv.jpg",
+  "preview": "/storage/releases/posters/10329/HkOfY3XFdQytm3vAzpaQDoSX1vOQt1Hv.jpg",
+  "thumbnail": "/storage/releases/posters/10329/GG6ZlYsbbIZbMwl64lUpRSP2WfwsWRWI.jpg",
+  "optimized": {
+   "src": "/storage/releases/posters/10329/30MvQ6w8d7PgoxednzfGEZmZ2gjOMdPt.webp",
+   "preview": "/storage/releases/posters/10329/30MvQ6w8d7PgoxednzfGEZmZ2gjOMdPt.webp",
+   "thumbnail": "/storage/releases/posters/10329/Czs2Mtq0wMSVm2ibn9Wpb5ffIe3I03uA.webp"
+  }
+ },
+ "fresh_at": "2026-11-24T14:47:27+00:00",
+ "created_at": "2026-08-18T22:55:37+00:00",
+ "updated_at": "2026-11-24T14:46:50+00:00",
+ "is_ongoing": true,
+ "age_rating": {
+  "value": "R16_PLUS",
+  "label": "16+",
+  "is_adult": false,
+  "description": "Для людей, достигших возраста шестнадцати лет (16+)"
+ },
+ "publish_day": {
+  "value": 2,
+  "description": "Вторник"
+ },
+ "description": "История разворачивается в Академии-сити — городе, где сверхспособности признаны официальной наукой. Но за внешним спокойствием скрывается тёмная сторона, где выполняются секретные миссии, о которых никогда не узнает публика.\r\nВ этом подполье действует элитный отряд «ITEM». В него входят четыре девушки: Рико, которая может отслеживать сигналы способностей; Френда, специалистка по взрывчатке и ловушкам; Саяи, управляющая азотом и отвечающая за защиту; и лидер группы — Сизури, одна из семи сильнейших экстрасенсов города.\r\nДевушки живут во тьме Академии-сити и без лишних слов выполняют приказы. Их история — это встреча, дружба и тень надвигающейся трагедии, которая заставит поставить на кон всё.",
+ "notification": null,
+ "episodes_total": null,
+ "external_player": null,
+ "is_in_production": true,
+ "is_blocked_by_geo": false,
+ "is_blocked_by_copyrights": false,
+ "is_comments_closed": false,
+ "comments_count": 5,
+ "added_in_users_favorites": 2465,
+ "average_duration_of_episode": 24,
+ "added_in_planned_collection": 228,
+ "added_in_watched_collection": 4,
+ "added_in_watching_collection": 215,
+ "added_in_postponed_collection": 13,
+ "added_in_abandoned_collection": 15,
+ "genres": [
+  {
+   "id": 22,
+   "name": "Фантастика"
+  },
+  {
+   "id": 14,
+   "name": "Экшен"
+  }
+ ],
+ "episodes": [
+  {
+   "id": "a2f90072-763b-4e24-8e6a-f5074c420e80",
+   "ordinal": 1,
+   "name": "ITEM"
+  },
+  {
+   "id": "a3071459-0044-4841-86e5-9214014ff6b4",
+   "ordinal": 2,
+   "name": "Новичок Саяи Кинухата"
+  },
+  {
+   "id": "a3152c11-40c2-4a1f-a5de-31086a191fdf",
+   "ordinal": 3,
+   "name": "Чоби Ханано — пятая"
+  },
+  {
+   "id": "a3233d6f-6db1-463c-bbbb-39faea04c20a",
+   "ordinal": 4,
+   "name": "Митори Коудзаку — жидкая тень"
+  },
+  {
+   "id": "a3316ccd-11e3-4354-be33-edbe377d9871",
+   "ordinal": 5,
+   "name": "Внедрение"
+  },
+  {
+   "id": "a33f5664-1689-482c-801e-601eb70ea141",
+   "ordinal": 6,
+   "name": "Колизей"
+  },
+  {
+   "id": "a34d6f81-fba9-4f32-bc53-79f9655f0101",
+   "ordinal": 7,
+   "name": "ITEM против ITEM"
+  }
+ ]
+}

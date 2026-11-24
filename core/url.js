@@ -21,6 +21,7 @@ export const KINDS = {
   article: { icon: "📰", label: "Статья" },
   news: { icon: "🗞️", label: "Новость" },
   product: { icon: "🛒", label: "Товар" },
+  vacancy: { icon: "💼", label: "Вакансия" },
   book: { icon: "📕", label: "Книга" },
   page: { icon: "🔗", label: "Страница" },
 };
@@ -33,6 +34,12 @@ export const SITE_NAMES = {
   github: "GitHub",
   wikipedia: "Википедия",
   habr: "Хабр",
+  anilibria: "AniLibria",
+  mangalib: "MangaLib",
+  webtoons: "Webtoons",
+  rutube: "Rutube",
+  hh: "hh.ru",
+  ozon: "Ozon",
 };
 
 const SHIKI_HOSTS = new Set(["shikimori.one", "shikimori.me", "shikimori.org", "shikimori.io", "shiki.one"]);
@@ -43,6 +50,10 @@ const GH_RESERVED = new Set([
   "codespaces", "collections", "events", "apps", "security", "enterprise", "customer-stories", "readme",
   "site", "team", "home", "dashboard", "stars", "watching",
 ]);
+// AniLibria переехала на AniLiberty; старые адреса (anilibria.top, .wtf, .tv) работают и перенаправляют
+const ALIB_HOST = /^(anilibria|aniliberty)\.(top|wtf|tv)$/;
+const ALIB_RESERVED = new Set(["latest", "random", "release", "catalog", "franchises", "schedule"]);
+const MANGALIB_HOSTS = new Set(["mangalib.org", "mangalib.me"]);
 // метки отслеживания — не часть адреса (дубли с ними склеиваются)
 // si/feature/pp — метки только YouTube (там ссылка склеивается по id видео), на других сайтах не трогаем
 const TRACKING = /^(utm_[a-z_]+|fbclid|gclid|yclid|ysclid|_openstat|ref_src|igshid|mc_[a-z_]+)$/i;
@@ -247,6 +258,80 @@ export function recognize(url) {
     }
   }
 
+  if (ALIB_HOST.test(host)) {
+    // тайтл: /anime/releases/<код> (старый вид — /anime/releases/release/<код>, на anilibria.tv — /release/<код>.html)
+    m = path.match(/^\/anime\/releases\/(?:release\/)?([a-z0-9][\w-]*)\/?$/i) || path.match(/^\/release\/([a-z0-9][\w-]*)\.html$/i);
+    if (m && !ALIB_RESERVED.has(m[1].toLowerCase()) && harmlessQuery(u)) {
+      const alias = m[1].toLowerCase();
+      return { ...base, ...kindInfo("anime"), provider: "anilibria", ref: { alias, api: alibApi(host, u) }, key: `anilibria:${alias}` };
+    }
+    // серия: /anime/video/episode/<uuid>
+    m = path.match(/^\/anime\/video\/episode\/([0-9a-f-]{36})\/?$/i);
+    if (m) {
+      const episode = m[1].toLowerCase();
+      return { ...base, ...kindInfo("anime"), kindLabel: "Серия аниме", provider: "anilibria", ref: { episode, api: alibApi(host, u) }, key: `anilibria:ep:${episode}` };
+    }
+    return { ...base, provider: "page" };
+  }
+
+  if (MANGALIB_HOSTS.has(host)) {
+    // тайтл: /ru/manga/<id>--<slug>; главы (/read/…), ?section=chapters и прочее — отдельные страницы
+    m = path.match(/^\/(?:[a-z]{2}\/)?manga\/((\d+)--[^/]+)\/?$/);
+    const section = u.searchParams.get("section");
+    const plain = [...u.searchParams.keys()].every((k) => TRACKING.test(k) || k === "section") && (!section || section === "info");
+    if (m && plain) {
+      return { ...base, ...kindInfo("manga"), provider: "mangalib", ref: { slug: m[1] }, key: `mangalib:${m[2]}` };
+    }
+    return { ...base, provider: "page" };
+  }
+
+  if (host === "webtoons.com") {
+    // /en/fantasy/tower-of-god/list?title_no=95 — тайтл; …/<эпизод>/viewer?title_no=95&episode_no=1 — эпизод
+    const no = u.searchParams.get("title_no");
+    const ep = u.searchParams.get("episode_no");
+    const extra = [...u.searchParams.keys()].filter((k) => !TRACKING.test(k) && k !== "title_no" && k !== "episode_no");
+    m = path.match(/^\/([a-z]{2}(?:-[a-z]+)?)\/([\w-]+)\/([\w-]+)\/(?:list|([\w-]+)\/viewer)\/?$/i);
+    if (m && /^\d+$/.test(no || "") && !extra.length) {
+      const [, lang, genre, slug, epSlug] = m;
+      const canvas = genre.toLowerCase() === "canvas" || genre.toLowerCase() === "challenge";
+      const ns = `webtoons:${canvas ? "canvas" : "original"}:${no}`;
+      if (!epSlug && !ep) {
+        return { ...base, ...kindInfo("manga"), kindLabel: "Вебтун", provider: "webtoons", ref: { lang, genre, slug, no }, key: ns };
+      }
+      if (epSlug && /^\d+$/.test(ep || "")) {
+        return { ...base, ...kindInfo("manga"), kindLabel: "Вебтун · эпизод", provider: "webtoons", ref: { lang, genre, slug, no, ep }, key: `${ns}:${ep}` };
+      }
+    }
+    return { ...base, provider: "page" };
+  }
+
+  if (host === "rutube.ru") {
+    // /video/<id>/, /shorts/<id>/, /play/embed/<id>; закрытые видео (/video/private/…) — по ссылке с ключом, не трогаем
+    m = path.match(/^\/(video|shorts|play\/embed|live\/video)\/([0-9a-f]{32})\/?$/i);
+    if (m) {
+      const id = m[2].toLowerCase();
+      return { ...base, ...kindInfo(m[1] === "shorts" ? "short" : "video"), provider: "rutube", ref: { id }, key: `rutube:${id}` };
+    }
+    if ((m = path.match(/^\/(channel\/\d+|u\/[\w-]+)\/?$/))) {
+      return { ...base, ...kindInfo("channel"), provider: "page", key: `rutube:${m[1].toLowerCase()}` };
+    }
+    return { ...base, provider: "page" };
+  }
+
+  if (host === "hh.ru" || host.endsWith(".hh.ru")) {
+    // вакансия — по номеру; параметры поиска (?query=…&hhtmFrom=…) страницу не меняют
+    m = path.match(/^\/vacancy\/(\d+)\/?$/);
+    if (m) return { ...base, ...kindInfo("vacancy"), provider: "hh", ref: { id: m[1] }, key: `hh:vacancy:${m[1]}` };
+    return { ...base, provider: "page" };
+  }
+
+  if (host === "ozon.ru") {
+    // /product/<название>-<номер>/ (параметры — выбранный вариант, отзывы, реклама — не важны: товар тот же)
+    m = path.match(/^\/product\/(?:[^/]*-)?(\d{3,})\/?$/) || path.match(/^\/context\/detail\/id\/(\d+)\/?$/);
+    if (m) return { ...base, ...kindInfo("product"), provider: "ozon", ref: { id: m[1] }, key: `ozon:${m[1]}` };
+    return { ...base, provider: "page" };
+  }
+
   const sq = searchOf(url);
   if (sq) {
     // разные запросы — разные ссылки; один и тот же запрос — одна
@@ -257,6 +342,11 @@ export function recognize(url) {
 
   if (/^https?:$/.test(u.protocol)) return { ...base, provider: "page" };
   return base;
+}
+
+// API AniLiberty: у anilibria.top и aniliberty.top — своё, остальные зеркала — через aniliberty.top
+function alibApi(host, u) {
+  return host.endsWith(".top") ? u.origin : "https://aniliberty.top";
 }
 
 /** Тип по og:type страницы — для сайтов без отдельного распознавания. */
@@ -291,6 +381,12 @@ export function providerForSite(site) {
   if (h === "github.com") return "github";
   if (/^[a-z-]+(\.m)?\.wikipedia\.org$/.test(h)) return "wikipedia";
   if (h === "habr.com") return "habr";
+  if (ALIB_HOST.test(h)) return "anilibria";
+  if (MANGALIB_HOSTS.has(h)) return "mangalib";
+  if (h === "webtoons.com") return "webtoons";
+  if (h === "rutube.ru") return "rutube";
+  if (h === "hh.ru" || h.endsWith(".hh.ru")) return "hh";
+  if (h === "ozon.ru") return "ozon";
   return null;
 }
 
