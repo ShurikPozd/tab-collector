@@ -52,12 +52,14 @@ async function enrichLoop() {
   running = true;
   const patches = new Map();
   let timer = null;
+  let writeFailed = false;
   let writing = Promise.resolve();
   try {
     for (;;) {
       // вкладка сборщика ушла в фон — отпускаем работу видимой странице (панели), в фоне таймеры медленные
       if (document.hidden) break;
       await writing;
+      if (writeFailed) break; // хранилище не пишет — не спрашиваем сайты по кругу; продолжим позже
       const { items } = await load();
       const todo = items.filter((it) => it.enrich === "pending" && !patches.has(it.id) && !seen.has(it.id));
       if (!todo.length) break;
@@ -77,7 +79,7 @@ async function enrichLoop() {
           patches.set(it.id, p);
           left = Math.max(0, left - 1);
           onState(left);
-          if (!timer) timer = setTimeout(() => ((timer = null), (writing = flush(patches).catch(() => {}))), 3000);
+          if (!timer) timer = setTimeout(() => ((timer = null), (writing = flush(patches).catch(() => (writeFailed = true)))), 3000);
         }
       };
       // разные сайты идут параллельно, один и тот же — с паузами (см. polite в enrich.js)
@@ -88,8 +90,6 @@ async function enrichLoop() {
       await flush(patches);
     }
   } finally {
-    // недописанное (сбой записи) — снова можно уточнить, без перезагрузки страницы
-    for (const id of patches.keys()) seen.delete(id);
     running = false;
     left = 0;
     onState(0);

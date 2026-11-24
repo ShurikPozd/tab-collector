@@ -1,6 +1,6 @@
 // Автопроверки чистых модулей (без Chrome): node tests/run.mjs
 import assert from "node:assert/strict";
-import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf, siteLabel } from "../core/url.js";
+import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf, siteLabel, providerForSite, siteTitle } from "../core/url.js";
 import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
 import { sendable } from "../core/bot.js";
@@ -159,6 +159,15 @@ t("служебные параметры не мешают распознава�
   assert.equal(recognize("https://ru.m.wikipedia.org/wiki/X").provider, "wikipedia");
   assert.equal(k("https://ru.m.wikipedia.org/wiki/X"), k("https://ru.wikipedia.org/wiki/X"));
   assert.equal(recognize("https://www.youtube.com/@veritasium/featured").kind, "channel");
+});
+t("известный сайт — по адресу (группы и меню называются одинаково)", () => {
+  assert.equal(providerForSite("shikimori.io"), "shikimori");
+  assert.equal(providerForSite("ru.m.wikipedia.org"), "wikipedia");
+  assert.equal(providerForSite("youtube.com"), "youtube");
+  assert.equal(providerForSite("example.com"), null);
+  assert.equal(siteTitle("youtube.com"), "YouTube");
+  assert.equal(siteTitle("example.com"), "example.com");
+  assert.equal(siteTitle("file"), "Файлы на компьютере");
 });
 t("поиск Google и Яндекса", () => {
   const r = recognize("https://www.google.com/search?q=%D1%84%D1%80%D0%B8%D1%80%D0%B5%D0%BD+%D0%B0%D0%BD%D0%B8%D0%BC%D0%B5&sca_esv=1");

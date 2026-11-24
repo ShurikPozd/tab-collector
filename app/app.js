@@ -4,7 +4,7 @@
 import { hydrateIcons, icon } from "./icons.js";
 import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
 import { collectTabs, sleepTabs, untouchable } from "../core/collect.js";
-import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS, SITE_NAMES } from "../core/url.js";
+import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS, SITE_NAMES, providerForSite, siteTitle } from "../core/url.js";
 import { shotStamps } from "../core/shots.js";
 import { cleanOrphans, migrateKeys } from "../core/store.js";
 import { bindPeek, shotUrl, forgetShots, forgetShotKeys } from "./peek.js";
@@ -83,15 +83,13 @@ function groupItems(items) {
     return [...groups.values()];
   }
   const byKind = st.filter.type === "site";
-  // сайт → известный сайт (Shikimori, YouTube…), если на нём есть хоть одна распознанная страница:
-  // тогда и форум Shikimori, и каналы YouTube — в той же группе, что аниме и видео
-  const providerOf = new Map();
-  for (const it of st.items) if (it.provider && it.provider !== "page" && !providerOf.has(it.site)) providerOf.set(it.site, it.provider);
+  // известный сайт определяется по адресу: форум Shikimori и каналы YouTube — в той же группе,
+  // что аниме и видео, и группа не меняет имя, когда удалили последнюю распознанную ссылку
   for (const it of items) {
     if (byKind) add(`k:${it.kind}`, it, () => ({ kind: "kind", k: it.kind }));
     else {
       // известные сайты — одной группой под своим именем (Shikimori .one и .io, Википедия ru и en)
-      const prov = providerOf.get(it.site);
+      const prov = providerForSite(it.site);
       add(prov ? `p:${prov}` : `s:${it.site}`, it, () => ({ kind: "site", site: it.site, sample: it, provider: prov }));
     }
   }
@@ -123,7 +121,7 @@ function groupHead(g, visAll) {
   } else {
     const smp = g.sample;
     lead = `<span class="fav lg-ico">${favImg(smp.favicon, smp.url)}</span>`;
-    title = g.provider ? SITE_NAMES[g.provider] || siteLabel(smp) : hostLabel(g.site);
+    title = g.provider ? SITE_NAMES[g.provider] : hostLabel(g.site);
     const kinds = new Map();
     for (const it of visAll.get(g.key) || g.items) if (it.kind !== "page") kinds.set(it.kindLabel, (kinds.get(it.kindLabel) || 0) + 1);
     sub = [...kinds.entries()]
@@ -648,7 +646,7 @@ function renderSide() {
   }
   const siteList = [...sites.entries()].sort((a, b) => b[1].n - a[1].n);
   // известные сайты — по имени (Shikimori), остальные — по адресу: «Тестовый блог» на трёх хостах не сольётся
-  const baseLabel = (site, s) => (s.sample.provider && s.sample.provider !== "page" ? siteLabel(s.sample) : hostLabel(site));
+  const baseLabel = (site) => siteTitle(site); // как у заголовков групп
   const labelCount = new Map();
   for (const [site, s] of siteList) labelCount.set(baseLabel(site, s), (labelCount.get(baseLabel(site, s)) || 0) + 1);
   // две «Википедии» (ru и en) — с адресом, чтобы отличать

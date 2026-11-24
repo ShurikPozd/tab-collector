@@ -124,7 +124,8 @@ async function go() {
     // (сознательную повторную отправку уже отправленных — например, списком — не трогаем)
     const fresh = new Map((await load()).items.map((it) => [it.id, it]));
     const before = items.length;
-    items = items.filter((it) => fresh.has(it.id) && (fresh.get(it.id).sentAt || null) === (sentBefore.get(it.id) || null));
+    // и отправляем свежие версии: описания могли уточниться, пока окно было открыто
+    items = items.filter((it) => fresh.has(it.id) && (fresh.get(it.id).sentAt || null) === (sentBefore.get(it.id) || null)).map((it) => fresh.get(it.id));
     if (before && !items.length) return { allSentElsewhere: true };
     if (items.length < before) {
       $("send-count").innerHTML = `Отправить: <b>${esc(linksWord(items.length))}</b> (остальные уже отправили или удалили в другом окне)`;

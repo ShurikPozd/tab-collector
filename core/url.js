@@ -280,6 +280,25 @@ export function siteLabel(item) {
   return (item.provider && SITE_NAMES[item.provider]) || item.siteName || item.site || "";
 }
 
+/** Известный сайт по хосту (shikimori.io → shikimori, ru.wikipedia.org → wikipedia) или null. */
+export function providerForSite(site) {
+  const h = String(site || "").toLowerCase();
+  if (SHIKI_HOSTS.has(h)) return "shikimori";
+  if (h === "myanimelist.net") return "mal";
+  if (h === "anilist.co") return "anilist";
+  if (h === "youtube.com" || h === "music.youtube.com" || h === "youtu.be") return "youtube";
+  if (h === "github.com") return "github";
+  if (/^[a-z-]+(\.m)?\.wikipedia\.org$/.test(h)) return "wikipedia";
+  if (h === "habr.com") return "habr";
+  return null;
+}
+
+/** Подпись сайта для меню и групп: «Shikimori», «YouTube» — или сам адрес. */
+export function siteTitle(site) {
+  const p = providerForSite(site);
+  return p ? SITE_NAMES[p] : hostLabel(site);
+}
+
 /** Подпись группы вкладок по хосту. */
 export function hostLabel(site) {
   return site === "file" ? "Файлы на компьютере" : site || "без адреса";
