@@ -263,7 +263,6 @@ chrome.tabs.onRemoved.addListener((id) => chrome.storage.session.remove([SK(id),
 // и уменьшаем до 640 px. Спящие и фоновые вкладки снять нельзя — только то, что на экране.
 let shotTimer = null;
 let lastShot = 0;
-// банки, госуслуги, почта и входы — не снимаем
 // банки, госуслуги, почта, мессенджеры и входы — не снимаем
 const PRIVATE = /(^|\.)(bank|sber|sberbank|tinkoff|tbank|alfabank|vtb|raiffeisen|gazprombank|paypal|qiwi|yoomoney|gosuslugi|nalog|accounts\.google|login|auth|passport|id\.yandex|web\.telegram|web\.whatsapp|discord|slack|messenger)\b|^(mail|e\.mail|outlook|webmail)\./i;
 

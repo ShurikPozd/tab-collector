@@ -611,7 +611,12 @@ function bindOpen() {
           }
           // пока проверяли, на вкладку могли перейти или открыть в ней другую страницу
           const now = await chrome.tabs.get(t.id).catch(() => null);
-          if (!now || now.active || now.url !== t.url) continue;
+          if (!now || now.active || now.pinned || now.audible || now.url !== t.url) continue;
+          // оставляемую копию могли закрыть, пока проверяли черновик, — тогда эту не трогаем
+          const key = normalizeUrl(t.url);
+          const gone = new Set(closed.map((c) => c.id).concat(t.id));
+          const twins = (await chrome.tabs.query({}).catch(() => [])).filter((x) => !gone.has(x.id) && !x.incognito && normalizeUrl(x.url || "") === key);
+          if (!twins.length) continue;
           try {
             await chrome.tabs.remove(t.id);
             closed.push(t);

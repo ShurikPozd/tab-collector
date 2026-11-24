@@ -162,15 +162,19 @@ export function decodeEntities(s) {
   });
 }
 
+const BLOCK = /<\/?(p|div|li|br|ul|ol|h\d|section|article|blockquote|tr|td|table)\b[^>]*>/gi;
 const stripTags = (s) =>
   String(s || "")
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<\/?(p|div|li|br|ul|ol|h\d)\b[^>]*>/gi, " ")
+    .replace(BLOCK, " ")
     .replace(/<\/?[a-z][^>]*>/gi, "");
+// после раскодирования «<Ctrl>» — уже обычный текст: убираем только настоящие теги
+const stripKnownTags = (s) =>
+  s.replace(BLOCK, " ").replace(/<\/?(span|b|i|u|s|strong|em|a|code|pre|small|sup|sub|font|img|hr)\b[^>]*>/gi, "");
 
 /** HTML → чистый текст (описание вакансии и т.п.). Дважды: разметка бывает заэкранирована ещё раз. */
 export function htmlText(s) {
-  return stripTags(decodeEntities(stripTags(s)))
+  return stripKnownTags(decodeEntities(stripTags(s)))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -366,6 +370,11 @@ export function hhPagePatch(html) {
     const loc = [].concat(j.jobLocation || [])[0] || {};
     const addr = loc.address || {};
     city = typeof addr === "string" ? addr : addr.addressLocality || "";
+  }
+  if (!title) {
+    // заголовок вакансии на самой странице — точнее, чем разбор og:title
+    const h1 = String(html).match(/<h1[^>]*data-qa="vacancy-title"[^>]*>([\s\S]*?)<\/h1>/);
+    if (h1) title = htmlText(h1[1]);
   }
   if (!title) {
     // «Вакансия Python разработчик в Москве, работа в компании Х». Город — с заглавной и последним

@@ -514,6 +514,13 @@ t("описания без разметки, даже заэкранирован
   assert.equal(htmlText("&lt;p&gt;Опыт &lt;b&gt;3&lt;/b&gt; года&lt;/p&gt;"), "Опыт 3 года");
   assert.equal(htmlText("<p>a &amp; b</p>"), "a & b");
   assert.equal(rutubePatch({ description: "<b>Жирный</b>  текст" }).description, "Жирный текст");
+  // раскодированный «<Ctrl>» — обычный текст, не тег
+  assert.equal(htmlText("Нажмите &lt;Ctrl&gt; и &lt;Enter&gt;"), "Нажмите <Ctrl> и <Enter>");
+  assert.equal(htmlText("Love &lt;3"), "Love <3");
+});
+t("hh.ru без schema.org: заголовок со страницы", () => {
+  const html = '<meta property="og:title" content="Вакансия Специалист в IT-отдел, работа в компании Х"><h1 data-qa="vacancy-title" class="x"><span>Специалист в IT-отдел</span></h1>';
+  assert.equal(hhPagePatch(html).title, "Специалист в IT-отдел");
 });
 t("hh.ru без schema.org: должность не обрезается", () => {
   const page = (x) => `<meta property="og:title" content="${x}">`;

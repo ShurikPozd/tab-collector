@@ -135,5 +135,22 @@ await t("новые сайты: старые записи распознаютс
   await removeItems([it.id]);
 });
 
+await t("миграция склеивает зеркала с одним ключом (spb.hh.ru и hh.ru)", async () => {
+  const a = makeItem({ url: "https://hh.ru/vacancy/123", title: "Вакансия" }, {}, 1);
+  const b = makeItem({ url: "https://spb.hh.ru/vacancy/123?query=x", title: "Вакансия" }, {}, 1);
+  b.nkey = "spb.hh.ru/vacancy/123"; // как у записи, собранной до 0.5.2
+  a.nkey = "hh.ru/vacancy/123";
+  await addItems([a, b]);
+  await patchItems([a.id], () => ({ provider: null, kind: "page", nkey: "hh.ru/vacancy/123" }));
+  await patchItems([b.id], () => ({ provider: null, kind: "page", nkey: "spb.hh.ru/vacancy/123", mark: "want", sentAt: 5 }));
+  mem.settings = { ...(mem.settings || {}), keysVersion: 3 };
+  await migrateKeys();
+  const left = (await load()).items.filter((x) => x.id === a.id || x.id === b.id);
+  assert.equal(left.length, 1);
+  assert.equal(left[0].mark, "want");
+  assert.equal(left[0].sentAt, 5);
+  await removeItems(left.map((x) => x.id));
+});
+
 console.log(`${ok} OK, ${fail} FAIL (хранилище)`);
 process.exit(fail ? 1 : 0);

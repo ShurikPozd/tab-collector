@@ -1,7 +1,7 @@
 // Окно «Отправить в Telegram»: выбор режима, предпросмотр, отправка с ходом и итогом.
 
 import { hydrateIcons } from "./icons.js";
-import { itemText, listParts, linksWord, descLimit } from "../core/format.js";
+import { itemText, listParts, linksWord, descLimit, plural } from "../core/format.js";
 import { sendLinks, botSettings, sendable } from "../core/bot.js";
 import { patchItems, load } from "../core/store.js";
 import { esc } from "./ui.js";
@@ -12,6 +12,9 @@ let sentBefore = new Map(); // отметки «отправлено» на мо
 let onDone = () => {};
 let ctl = null;
 let bound = false;
+// заголовок списка, который не ушёл до конца: при повторе тех же ссылок он тот же — и бот узнает повтор
+let keepTitle = { k: "", v: "" };
+const selKey = (list) => list.map((it) => it.id).sort().join(",");
 
 function mode() {
   return document.querySelector('#send-dlg input[name="mode"]:checked').value;
@@ -113,6 +116,7 @@ async function go() {
   ctl = new AbortController();
   busy(true);
   const m = mode();
+  const listTitle = $("list-title").value.trim();
   const s = await botSettings();
   if (!s.token) {
     ctl = null;
@@ -162,6 +166,7 @@ async function go() {
     ctl = null;
     busy(false);
   }
+  if (!res.busy) keepTitle = m === "list" && (res.error || res.stopped) && items.length ? { k: selKey(items), v: listTitle } : { k: "", v: "" };
   if (res.busy) {
     status("Отправка уже идёт в другом окне сборщика — дождитесь её конца.", "err");
     return;
@@ -180,7 +185,7 @@ async function go() {
     if (res.exists) parts.push(`уже были в архиве ${res.exists}`);
     if (res.failed) parts.push(`не получилось ${res.failed}`);
   } else {
-    if (res.saved) parts.push(`${linksWord(res.saved)} — ${res.posts > 1 ? `${res.posts} ${res.posts < 5 ? "поста" : "постов"}` : "одним постом"}`);
+    if (res.saved) parts.push(`${linksWord(res.saved)} — ${res.posts > 1 ? `${res.posts} ${plural(res.posts, "пост", "поста", "постов")}` : "одним постом"}`);
     if (res.exists) parts.push(`${linksWord(res.exists)} — этот список бот уже получал, второй пост не нужен`);
   }
   if (res.skipped) parts.push(`пропущено ${res.skipped} (не веб-адреса или слишком длинные)`);
@@ -201,7 +206,7 @@ export function openSend(selected, done) {
   sentBefore = new Map(selected.map((it) => [it.id, it.sentAt || null]));
   onDone = done || (() => {});
   $("send-count").innerHTML = `Выбрано: <b>${esc(linksWord(items.length))}</b>`;
-  $("list-title").value = "";
+  $("list-title").value = selKey(selected) === keepTitle.k ? keepTitle.v : "";
   status("");
   busy(false);
   $("send-go").disabled = false;

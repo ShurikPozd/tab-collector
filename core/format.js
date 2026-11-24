@@ -57,7 +57,7 @@ export function itemText(item, opts) {
   return itemLines(item, opts).join("\n");
 }
 
-function plural(n, one, few, many) {
+export function plural(n, one, few, many) {
   const a = Math.abs(n) % 100;
   const b = a % 10;
   if (a > 10 && a < 20) return many;

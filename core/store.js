@@ -113,6 +113,21 @@ export async function migrateKeys() {
         n++;
       }
     }
+    // зеркала и регионы (spb.hh.ru и hh.ru, anilibria.top и .wtf) теперь дают один ключ — склеиваем,
+    // как при сборе: остаётся верхняя запись, пустые поля и отметки дополняются из нижней
+    const byKey = new Map();
+    d.items = d.items.filter((it) => {
+      const old = byKey.get(it.nkey);
+      if (!old) {
+        byKey.set(it.nkey, it);
+        return true;
+      }
+      for (const k of ["description", "image", "favicon", "siteName", "meta", "mark", "folder", "sentCategory"]) if (!old[k] && it[k]) old[k] = it[k];
+      if ((it.sentAt || 0) > (old.sentAt || 0)) old.sentAt = it.sentAt;
+      if (old.enrich === "pending" && it.enrich === "done" && it.description) old.enrich = "done";
+      n++;
+      return false;
+    });
     d.settings.keysVersion = KEYS_VERSION;
     return n;
   });

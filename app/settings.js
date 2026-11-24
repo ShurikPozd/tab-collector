@@ -120,7 +120,7 @@ function bind() {
       return hint("Адрес бота должен начинаться с https:// (http — только для localhost)", "err");
     }
     hint("Проверяю… если бот спал, он просыпается до минуты.");
-    await saveSettings({ baseUrl: $("set-url").value.trim().replace(/\/+$/, "") === DEFAULTS.baseUrl ? "" : $("set-url").value.trim(), token: $("set-token").value.trim() });
+    await saveSettings({ baseUrl: url === DEFAULTS.baseUrl ? "" : url, token: $("set-token").value.trim() });
     const r = await ping();
     b.disabled = false;
     b.classList.remove("spin");
