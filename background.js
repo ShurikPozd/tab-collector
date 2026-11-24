@@ -4,7 +4,8 @@
 import { collectTabs, sleepTabs, untouchable } from "./core/collect.js";
 import { siteOf, normalizeUrl, collectable } from "./core/url.js";
 import { putShot, shrink, pruneShots } from "./core/shots.js";
-import { migrateKeys } from "./core/store.js";
+import { migrateKeys, loadSettings } from "./core/store.js";
+import { sendBackup, backupDue } from "./core/backup.js";
 
 const APP = chrome.runtime.getURL("app/app.html");
 const EXT = chrome.runtime.getURL("");
@@ -137,6 +138,19 @@ function discardWhenReady(tabId) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg && msg.type === "backup-now") {
+    sendBackup({ manual: true }).then(reply, () => reply({ ok: false, text: "Копия не отправлена." }));
+    return true;
+  }
+  if (msg && msg.type === "backup-soon") {
+    // после крупного сбора — копия, если последняя была давно (больше часа назад)
+    backupDue(3600 * 1000).then((due) => due && sendBackup());
+    return false;
+  }
+  if (msg && msg.type === "schedule") {
+    schedule().then(() => reply({ ok: true }));
+    return true;
+  }
   if (msg && msg.type === "icon-behavior") {
     iconBehavior().then(() => reply({ ok: true }));
     return true;
@@ -292,4 +306,36 @@ async function takeShot(tabId) {
 chrome.tabs.onActivated.addListener(({ tabId }) => scheduleShot(tabId));
 chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   if (change.status === "complete" && tab.active) scheduleShot(tabId);
+});
+
+// ---------------------------------------------------------------- автоусыпление и автокопия
+// Раз в 15 минут: вкладки, к которым вы не возвращались дольше заданного (Настройки), усыпляются —
+// кроме закреплённых, активных, со звуком и с недописанным текстом. Раз в сутки — копия списка в бота.
+async function schedule() {
+  const st = await loadSettings();
+  if (st.autoSleepHours > 0) {
+    if (!(await chrome.alarms.get("tc-autosleep"))) chrome.alarms.create("tc-autosleep", { periodInMinutes: 15 });
+  } else await chrome.alarms.clear("tc-autosleep");
+  if (st.autoBackup !== false) {
+    if (!(await chrome.alarms.get("tc-backup"))) chrome.alarms.create("tc-backup", { periodInMinutes: 60, delayInMinutes: 5 });
+  } else await chrome.alarms.clear("tc-backup");
+}
+chrome.runtime.onInstalled.addListener(() => schedule().catch(() => {}));
+chrome.runtime.onStartup.addListener(() => schedule().catch(() => {}));
+
+async function autoSleep() {
+  const st = await loadSettings();
+  const hours = Number(st.autoSleepHours) || 0;
+  if (hours <= 0) return;
+  const old = Date.now() - hours * 3600 * 1000;
+  const tabs = (await chrome.tabs.query({ windowType: "normal" })).filter(
+    (t) => !t.active && !t.discarded && !t.pinned && !t.audible && t.lastAccessed && t.lastAccessed < old && !untouchable(t, EXT)
+  );
+  if (tabs.length) await sleepTabs(tabs); // проверит черновики сама
+}
+
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === "tc-autosleep") autoSleep().catch(() => {});
+  // будильник раз в час, а копия — раз в сутки (если компьютер спал, догоним при пробуждении)
+  if (a.name === "tc-backup") backupDue().then((due) => due && sendBackup()).catch(() => {});
 });

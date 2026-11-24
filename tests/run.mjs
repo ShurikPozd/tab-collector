@@ -4,6 +4,9 @@ import { recognize, normalizeUrl, siteOf, collectable, kindFromOgType, searchOf,
 import { itemText, listParts, payload, batches, botError, linksWord, EACH_BATCH, BODY_MAX, bodySize, descLimit, clip } from "../core/format.js";
 import { stripBB, shikiPatch, jikanPatch, anilistPatch, githubPatch, safeToFetch } from "../core/enrich.js";
 import { sendable } from "../core/bot.js";
+import { findDuplicates } from "../core/dups.js";
+import { markLabel } from "../core/marks.js";
+import { batchKey } from "../core/format.js";
 
 let ok = 0;
 let fail = 0;
@@ -280,6 +283,36 @@ t("пачки списка на 5000 ссылок считаются быстр�
   assert.ok(Date.now() - t0 < 600, `долго: ${Date.now() - t0} мс`);
   assert.equal(parts.flat().length, 5000);
   assert.ok(parts.every((p) => bodySize(payload("list", p, "x".repeat(120))) <= BODY_MAX));
+});
+t("дубли открытых вкладок: остаётся закреплённая, активная или последняя", () => {
+  const tabs = [
+    { id: 1, url: "https://shikimori.one/animes/52991-frieren", lastAccessed: 10 },
+    { id: 2, url: "https://shikimori.io/animes/52991", lastAccessed: 30 },
+    { id: 3, url: "https://shikimori.one/animes/52991#comments", lastAccessed: 20 },
+    { id: 4, url: "https://x.ru/a", pinned: true, lastAccessed: 1 },
+    { id: 5, url: "https://x.ru/a", lastAccessed: 99 },
+    { id: 6, url: "https://y.ru/", lastAccessed: 5 },
+  ];
+  const { close, groups } = findDuplicates(tabs, normalizeUrl);
+  assert.equal(groups, 2);
+  assert.deepEqual(close.map((t) => t.id).sort(), [1, 3, 5]); // осталась последняя (2) и закреплённая (4)
+  const act = findDuplicates([{ id: 7, url: "https://z.ru", active: true, lastAccessed: 1 }, { id: 8, url: "https://z.ru", lastAccessed: 9 }], normalizeUrl);
+  assert.deepEqual(act.close.map((t) => t.id), [8]); // активную не закрываем
+});
+t("отметки: подписи по типу страницы", () => {
+  assert.equal(markLabel("doing", "anime"), "Смотрю");
+  assert.equal(markLabel("done", "manga"), "Прочитал");
+  assert.equal(markLabel("done", "repo"), "Готово");
+  assert.equal(markLabel("want", "video"), "Хочу");
+});
+t("ключ пачки списка: тот же список — тот же ключ, другой — другой", () => {
+  const a = payload("list", [{ url: "https://a.ru", title: "A" }, { url: "https://b.ru", title: "B" }], "Зима");
+  const b = payload("list", [{ url: "https://a.ru", title: "A2" }, { url: "https://b.ru", title: "B2" }], "Зима");
+  const c = payload("list", [{ url: "https://a.ru", title: "A" }], "Зима");
+  assert.equal(a.batchKey, b.batchKey); // описания уточнились — список тот же
+  assert.notEqual(a.batchKey, c.batchKey);
+  assert.equal(payload("each", [{ url: "https://a.ru" }]).batchKey, undefined);
+  assert.match(batchKey(["https://a.ru"]), /^tc-[0-9a-z]+$/);
 });
 t("ошибки бота — по-русски", () => {
   assert.match(botError(404, null), /Обновите бота/);

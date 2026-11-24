@@ -3,7 +3,9 @@
 
 import { hydrateIcons, icon } from "./icons.js";
 import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
-import { collectTabs, sleepTabs, untouchable } from "../core/collect.js";
+import { collectTabs, sleepTabs, untouchable, draftIn } from "../core/collect.js";
+import { findDuplicates } from "../core/dups.js";
+import { MARKS, MARK_ICON, MARK_NAV, markLabel } from "../core/marks.js";
 import { recognize, siteOf, siteLabel, hostLabel, normalizeUrl, KINDS, SITE_NAMES, providerForSite, siteTitle } from "../core/url.js";
 import { shotStamps } from "../core/shots.js";
 import { cleanOrphans, migrateKeys } from "../core/store.js";
@@ -455,6 +457,12 @@ function renderOpen() {
   $("open-summary").innerHTML = sel
     ? `Выбрано <b>${sel}</b> из ${total}`
     : `${esc(nTabs(total))} на ${esc(nSites(groups.length))}`;
+  // дубли: одна и та же страница открыта несколько раз
+  const dups = findDuplicates(st.tabs.filter((t) => tabState(t) === ""), normalizeUrl);
+  st.dups = dups.close;
+  $("dups-btn").hidden = !dups.close.length;
+  $("dups-label").textContent = `Закрыть дубли (${dups.close.length})`;
+  $("dups-btn").disabled = !!st.collecting;
   $("collect-btn").disabled = !sel || !!st.collecting;
   $("sleep-btn").disabled = !sel || !!st.collecting;
 }
@@ -570,6 +578,36 @@ function bindOpen() {
       render();
     });
     runEnrich();
+    if (tabs.length >= 20) chrome.runtime.sendMessage({ type: "backup-soon" }).catch(() => {});
+  });
+
+  $("dups-btn").addEventListener("click", async () => {
+    const list = (st.dups || []).slice();
+    if (!list.length || st.collecting) return;
+    const pages = new Set(list.map((t) => normalizeUrl(t.url))).size;
+    if (!(await confirmDlg(`Закрыть дубли: ${nTabsAcc(list.length)}?`, `Эти страницы (${pages}) открыты несколько раз — останется по одной копии: закреплённая, активная или та, где вы были последним. Вкладки с недописанным текстом не закроются.`, "Закрыть дубли"))) return;
+    st.collecting = true;
+    renderOpen();
+    const closed = [];
+    try {
+      for (const t of list) {
+        if ((await draftIn(t)) !== "no") continue; // недописанный текст (или не успели проверить) — не трогаем
+        try {
+          await chrome.tabs.remove(t.id);
+          closed.push(t);
+        } catch (e) {
+          /* уже закрыта */
+        }
+      }
+    } finally {
+      st.collecting = false;
+      await reloadTabs();
+      renderOpen();
+    }
+    const kept = list.length - closed.length;
+    toast(`Закрыто дублей: ${closed.length}${kept ? ` (${kept} с недописанным текстом оставлены)` : ""}`, async () => {
+      await chrome.runtime.sendMessage({ type: "open", items: closed.map((t) => ({ url: t.url })), lazy: true, windowId: st.myWindowId }).catch(() => {});
+    });
   });
 
   $("sleep-btn").addEventListener("click", async () => {
@@ -609,6 +647,7 @@ function inFilter(it, f = st.filter) {
   if (f.type === "sent") return !!it.sentAt;
   if (f.type === "folder") return it.folder === f.id;
   if (f.type === "site") return it.site === f.site && (!f.kind || it.kind === f.kind);
+  if (f.type === "mark") return it.mark === f.mark;
   return true;
 }
 
@@ -632,6 +671,14 @@ function renderSide() {
   h += navItem({ type: "all" }, "Все ссылки", items.length, `<span class="nav-emoji">${icon("list", 18)}</span>`, false, "nav-main");
   h += navItem({ type: "unsent" }, "Не отправлены", items.length - sent, `<span class="nav-emoji">${icon("inbox", 18)}</span>`, false, "nav-main");
   h += navItem({ type: "sent" }, "В Telegram", sent, `<span class="nav-emoji">${icon("send", 18)}</span>`, false, "nav-main");
+  // отметки — появляются, когда отмечена хоть одна ссылка
+  const markCount = Object.fromEntries(MARKS.map((m) => [m, items.filter((it) => it.mark === m).length]));
+  if (MARKS.some((m) => markCount[m])) {
+    for (const m of MARKS) h += navItem({ type: "mark", mark: m }, MARK_NAV[m], markCount[m], `<span class="nav-emoji">${MARK_ICON[m]}</span>`, false, "nav-mark");
+    const curMark = st.filter.type === "mark" ? st.filter.mark : "";
+    h += `<button type="button" class="nav-item nav-pick nav-marks-btn${curMark ? " on" : ""}" aria-haspopup="menu" aria-current="${!!curMark}" title="${curMark ? MARK_NAV[curMark] : "Отметки"}" aria-label="${curMark ? `Отметка: ${MARK_NAV[curMark]}` : "Отметки"}" aria-expanded="false">
+      <span class="nav-emoji">${icon("star", 18)}</span><span class="n-label">${curMark ? MARK_NAV[curMark] : "Отметки"}</span><span class="n-count">${icon("chevron", 14)}</span></button>`;
+  }
   // узко: папки — одной кнопкой с меню (как сайты)
   const curFolder = st.filter.type === "folder" ? st.folders.find((f) => f.id === st.filter.id) : null;
   h += `<button type="button" class="nav-item nav-pick nav-folders-btn${curFolder ? " on" : ""}" aria-haspopup="menu" aria-current="${!!curFolder}" title="${curFolder ? esc(curFolder.name) : "Папки"}" aria-label="${curFolder ? esc(`Папка: ${curFolder.name}`) : "Папки"}" aria-expanded="false">
@@ -709,7 +756,7 @@ function card(it) {
     <label class="chk"><input type="checkbox" ${st.libSel.has(it.id) ? "checked" : ""} aria-label="Выбрать" /><span class="box"></span></label>
     ${thumb}
     <div class="c-body">
-      <div class="c-kicker"><span class="tag kind">${esc(it.icon)} ${esc(it.kindLabel)}</span><span>${esc(siteLabel(it))}</span></div>
+      <div class="c-kicker"><span class="tag kind">${esc(it.icon)} ${esc(it.kindLabel)}</span>${it.mark ? `<span class="tag mark mark-${esc(it.mark)}">${MARK_ICON[it.mark] || ""} ${esc(markLabel(it.mark, it.kind))}</span>` : ""}<span>${esc(siteLabel(it))}</span></div>
       <a class="c-title" href="${esc(it.url)}" data-open>${hl(it.title || it.url, st.q)}</a>
       ${it.meta ? `<div class="c-meta">${hl(it.meta, st.q)}</div>` : ""}
       ${it.description ? `<div class="c-desc">${hl(it.description, st.q)}</div>` : ""}
@@ -717,6 +764,7 @@ function card(it) {
     </div>
     <div class="c-actions">
       <button type="button" class="icon-btn" data-act="open" title="${st.openKeys && st.openKeys.has(it.nkey) ? "Перейти к открытой вкладке" : "Открыть"}" aria-label="${st.openKeys && st.openKeys.has(it.nkey) ? "Перейти к открытой вкладке" : "Открыть"}">${icon("external", 18)}</button>
+      <button type="button" class="icon-btn" data-act="mark" aria-haspopup="menu" title="Отметить: хочу, смотрю, готово" aria-label="Отметить">${icon("star", 18)}</button>
       <button type="button" class="icon-btn" data-act="del" title="Убрать из списка" aria-label="Убрать из списка">${icon("trash", 18)}</button>
     </div>
   </article>`;
@@ -773,7 +821,7 @@ function renderLib() {
   all.disabled = !vis.length;
   const sel = st.libSel.size;
   $("lib-summary").innerHTML = sel ? `Выбрано <b>${sel}</b>` : `<span class="where-now">${esc(filterName())} · </span>${esc(nLinks(vis.length))}`;
-  for (const id of ["open-btn", "folder-btn", "delete-btn", "send-btn"]) $(id).disabled = !sel;
+  for (const id of ["open-btn", "folder-btn", "mark-btn", "delete-btn", "send-btn"]) $(id).disabled = !sel;
   $("folder-tools").hidden = st.filter.type !== "folder";
 
   const line = $("enrich-line");
@@ -789,6 +837,7 @@ function renderLib() {
 
 function filterName() {
   const f = st.filter;
+  if (f.type === "mark") return MARK_NAV[f.mark] || "Отметка";
   if (f.type === "unsent") return "Не отправлены";
   if (f.type === "sent") return "В Telegram";
   if (f.type === "folder") return (st.folders.find((x) => x.id === f.id) || {}).name || "Папка";
@@ -847,6 +896,21 @@ function placeMenu(anchor) {
   menu.querySelector("button").focus();
 }
 
+let markTarget = [];
+function showMarkMenu(anchor, ids) {
+  const menu = $("folder-menu");
+  if (!menu.hidden && menu.dataset.kind === "mark" && menuOpener === anchor) return closeMenu(true);
+  menu.dataset.kind = "mark";
+  markTarget = ids;
+  const kinds = new Set(ids.map((id) => (st.items.find((it) => it.id === id) || {}).kind));
+  const k = kinds.size === 1 ? [...kinds][0] : ""; // у всех один тип — «Смотрю/Читаю», иначе — общие подписи
+  const cur = ids.length === 1 ? (st.items.find((it) => it.id === ids[0]) || {}).mark : "";
+  menu.innerHTML =
+    MARKS.map((m) => `<button type="button" data-mark="${m}" aria-checked="${cur === m}">${MARK_ICON[m]}<span class="m-label">${esc(k ? markLabel(m, k) : MARK_NAV[m])}</span><span class="m-count">${cur === m ? icon("check", 16) : ""}</span></button>`).join("") +
+    `<hr /><button type="button" data-mark="">${icon("close", 18)}<span class="m-label">Без отметки</span></button>`;
+  placeMenu(anchor);
+}
+
 function showFolderMenu(anchor) {
   const menu = $("folder-menu");
   menu.dataset.kind = "folders";
@@ -860,6 +924,16 @@ function showFolderMenu(anchor) {
 
 function bindLib() {
   $("side-nav").addEventListener("click", async (e) => {
+    const mb = e.target.closest(".nav-marks-btn");
+    if (mb) {
+      e.stopPropagation();
+      const menu = $("folder-menu");
+      if (!menu.hidden && menu.dataset.kind === "mark-pick") return closeMenu(true);
+      menu.dataset.kind = "mark-pick";
+      menu.innerHTML = MARKS.map((m) => `<button type="button" data-mark-filter="${m}">${MARK_ICON[m]}<span class="m-label">${MARK_NAV[m]}</span><span class="m-count">${st.items.filter((it) => it.mark === m).length}</span></button>`).join("");
+      placeMenu(mb);
+      return;
+    }
     const fb = e.target.closest(".nav-folders-btn");
     if (fb) {
       e.stopPropagation();
@@ -959,6 +1033,10 @@ function bindLib() {
     if (act) {
       if (act.dataset.act === "open") return openItems([it]);
       if (act.dataset.act === "del") return deleteItems([id]);
+      if (act.dataset.act === "mark") {
+        e.stopPropagation();
+        return showMarkMenu(act, [id]);
+      }
     }
     if (e.target.closest(".chk") || e.target === c || e.target.closest(".c-body") && !e.target.closest("a")) {
       if (e.target.closest(".chk")) e.preventDefault();
@@ -987,6 +1065,10 @@ function bindLib() {
       `<button type="button" data-group-pick="${v}" aria-checked="${st.groupBy === v}">${icon(ic, 18)}<span class="m-label">${text}</span><span class="m-count">${st.groupBy === v ? icon("check", 16) : ""}</span></button>`;
     menu.innerHTML = opt("site", "globe", "По сайтам") + opt("batch", "clock", "По сборам — что собрано за раз") + opt("none", "list", "Без групп");
     placeMenu(e.currentTarget);
+  });
+  $("mark-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    showMarkMenu(e.currentTarget, [...st.libSel]);
   });
   $("folder-btn").setAttribute("aria-expanded", "false");
   $("folder-btn").addEventListener("click", (e) => {
@@ -1022,6 +1104,26 @@ function bindLib() {
         await reloadItems();
       }
       st.filter = { type: "folder", id };
+      st.shown = PAGE;
+      st.libSel.clear();
+      renderLib();
+      return;
+    }
+    const mk = e.target.closest("[data-mark]");
+    if (mk) {
+      closeMenu(true);
+      const mark = mk.dataset.mark || null;
+      const ids = markTarget.slice();
+      await patchItems(ids, { mark });
+      await reloadItems();
+      renderLib();
+      if (ids.length > 1) toast(mark ? `Отмечено «${MARK_NAV[mark]}»: ${nLinksAcc(ids.length)}` : `Отметка снята: ${nLinksAcc(ids.length)}`);
+      return;
+    }
+    const mf = e.target.closest("[data-mark-filter]");
+    if (mf) {
+      closeMenu(true);
+      st.filter = { type: "mark", mark: mf.dataset.markFilter };
       st.shown = PAGE;
       st.libSel.clear();
       renderLib();

@@ -143,7 +143,7 @@ function hasDraft() {
 }
 
 /** "yes" | "no" | "unknown": не успели проверить — не усыпляем (лучше оставить, чем потерять текст). */
-async function draftIn(tab) {
+export async function draftIn(tab) {
   if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return "no";
   try {
     // все кадры страницы (окно комментария бывает во встроенном кадре); не ждём, пока догрузятся

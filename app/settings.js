@@ -31,6 +31,23 @@ export function scaleOf(settings) {
   return Number(settings[SCALE_KEY]) || 1;
 }
 
+function applyAutoSleep(h) {
+  document.querySelectorAll("[data-autosleep]").forEach((b) => b.setAttribute("aria-checked", String(Number(b.dataset.autosleep) === h)));
+}
+
+async function backupStatus(text, ok) {
+  const s = (await load()).settings;
+  $("set-autobackup").checked = s.autoBackup !== false;
+  const b = s.backup || {};
+  const el = $("backup-status");
+  el.className = `field-hint${ok === false ? " err" : ok ? " ok" : ""}`;
+  if (text) return (el.textContent = text);
+  if (b.lastAt) {
+    const d = new Date(b.lastAt);
+    el.textContent = `Последняя копия в Telegram: ${d.toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}${b.lastLinks != null ? ` · ${b.lastLinks} ссылок` : ""}.${b.lastError ? ` Последняя попытка не удалась: ${b.lastError}.` : ""}`;
+  } else el.textContent = b.lastError ? `Копия ещё не отправлялась: ${b.lastError}.` : "Копия в Telegram ещё не отправлялась.";
+}
+
 function applyOpens(v) {
   document.querySelectorAll("[data-opens]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.opens === v)));
 }
@@ -126,13 +143,38 @@ function bind() {
     await shotsCount();
     onChange();
   });
+  dlg.querySelectorAll("[data-autosleep]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      applyAutoSleep(Number(b.dataset.autosleep));
+      await saveSettings({ autoSleepHours: Number(b.dataset.autosleep) });
+      chrome.runtime.sendMessage({ type: "schedule" }).catch(() => {});
+    })
+  );
+  $("set-autobackup").addEventListener("change", async (e) => {
+    await saveSettings({ autoBackup: e.target.checked });
+    chrome.runtime.sendMessage({ type: "schedule" }).catch(() => {});
+    await backupStatus();
+  });
+  $("backup-send").addEventListener("click", async () => {
+    const b = $("backup-send");
+    b.disabled = true;
+    b.classList.add("spin");
+    $("backup-status").textContent = "Отправляю копию…";
+    const r = await chrome.runtime.sendMessage({ type: "backup-now" }).catch(() => null);
+    b.disabled = false;
+    b.classList.remove("spin");
+    await backupStatus(r && r.text, r && r.ok);
+  });
   $("backup-load").addEventListener("click", () => $("backup-file").click());
   $("backup-file").addEventListener("change", async (e) => {
     const f = e.target.files[0];
     e.target.value = "";
     if (!f) return;
     try {
-      const n = await importData(JSON.parse(await f.text()));
+      // копия из Telegram — сжатая (.json.gz): распаковываем
+      const head = new Uint8Array(await f.slice(0, 2).arrayBuffer());
+      const text = head[0] === 0x1f && head[1] === 0x8b ? await new Response(f.stream().pipeThrough(new DecompressionStream("gzip"))).text() : await f.text();
+      const n = await importData(JSON.parse(text));
       hint(n ? `Добавлено из копии: ${n}.` : "Всё из копии уже есть в списке.", "ok");
       onChange();
     } catch (err) {
@@ -165,6 +207,8 @@ export async function openSettings(changed) {
     ? "Для боковой панели. Во вкладке масштаб настраивается отдельно."
     : "Для страницы во вкладке. В боковой панели масштаб настраивается отдельно.";
   $("set-shots").checked = settings.shots !== false;
+  applyAutoSleep(Number(settings.autoSleepHours) || 0);
+  await backupStatus();
   await shotsCount();
   hint("");
   $("settings-dlg").showModal();

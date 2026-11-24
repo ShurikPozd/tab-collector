@@ -45,6 +45,7 @@
         <label class="check-all"><input id="open-all" type="checkbox" /><span class="box"></span><span>Выбрать все</span></label>
         <span id="open-summary" class="summary" role="status"></span>
         <div class="bar-actions">
+          <button id="dups-btn" type="button" class="ghost" hidden title="Одна и та же страница открыта несколько раз — оставить по одной копии"><span data-icon="copy"></span><span class="label" id="dups-label">Закрыть дубли</span></button>
           <button id="sleep-btn" type="button" class="ghost" disabled title="Выгрузить выбранные вкладки из памяти: они остаются в окне и загрузятся, когда вы на них перейдёте"><span data-icon="sleep"></span><span class="label">Усыпить</span></button>
           <button id="collect-btn" type="button" class="primary" disabled title="Сохранить выбранные вкладки в список и закрыть их"><span data-icon="collect"></span><span class="label">Собрать и закрыть</span></button>
         </div>
@@ -79,6 +80,7 @@
           <div class="bar-actions">
             <button id="open-btn" type="button" class="ghost" disabled title="Открыть выбранные во вкладках (кроме первой — усыплёнными)"><span data-icon="external"></span><span class="label">Открыть</span></button>
             <button id="folder-btn" type="button" class="ghost" disabled aria-haspopup="menu" title="Положить выбранные в папку"><span data-icon="folder"></span><span class="label">В папку</span></button>
+            <button id="mark-btn" type="button" class="ghost" disabled aria-haspopup="menu" aria-expanded="false" title="Отметить выбранные: хочу, смотрю (читаю), готово"><span data-icon="star"></span><span class="label">Отметить</span></button>
             <button id="delete-btn" type="button" class="ghost" disabled title="Убрать выбранные из списка"><span data-icon="trash"></span><span class="label">Удалить</span></button>
             <button id="send-btn" type="button" class="primary" disabled title="Отправить выбранные ссылки в Telegram-бота"><span data-icon="send"></span><span class="label">В Telegram</span></button>
           </div>
@@ -196,6 +198,17 @@
           <p id="set-status" class="field-hint" role="status"></p>
         </section>
         <section class="set-group">
+          <h3 id="autosleep-title">Усыплять вкладки, к которым не возвращались</h3>
+          <div class="seg seg-wide" role="radiogroup" aria-labelledby="autosleep-title">
+            <button type="button" data-autosleep="0" role="radio">Выкл</button>
+            <button type="button" data-autosleep="1" role="radio">1 ч</button>
+            <button type="button" data-autosleep="3" role="radio">3 ч</button>
+            <button type="button" data-autosleep="12" role="radio">12 ч</button>
+            <button type="button" data-autosleep="24" role="radio">Сутки</button>
+          </div>
+          <p class="field-hint">Вкладка останется на месте, но перестанет занимать память — загрузится, когда вы на неё перейдёте. Закреплённые, со звуком и с недописанным текстом не трогаются.</p>
+        </section>
+        <section class="set-group">
           <h3>Предпросмотр</h3>
           <label class="check-all switch-row"><input id="set-shots" type="checkbox" /><span class="box"></span><span>Делать снимки страниц, на которые вы переходите</span></label>
           <p class="field-hint">Снимок видимой части страницы показывается при наведении на ссылку и в списке, если у страницы нет своей картинки. Хранится только в этом браузере. Спящие вкладки снять нельзя — снимок появится, когда вы на них перейдёте.</p>
@@ -206,11 +219,14 @@
         </section>
         <section class="set-group">
           <h3>Резервная копия списка</h3>
-          <p class="field-hint">Файл со всеми собранными ссылками и папками. Загрузка копии ничего не удаляет — только добавляет недостающее.</p>
+          <label class="check-all switch-row"><input id="set-autobackup" type="checkbox" /><span class="box"></span><span>Раз в сутки отправлять копию в Telegram-бота</span></label>
+          <p id="backup-status" class="field-hint"></p>
+          <p class="field-hint">Файл со всеми собранными ссылками и папками (без настроек и секрета). Загрузка копии — в том числе файла <b>.json.gz</b> из Telegram — ничего не удаляет, только добавляет недостающее.</p>
           <div class="set-row">
+            <button id="backup-send" type="button" class="ghost"><span data-icon="send"></span><span class="label">Копию в Telegram</span></button>
             <button id="backup-save" type="button" class="ghost"><span data-icon="download"></span><span class="label">Сохранить копию</span></button>
             <button id="backup-load" type="button" class="ghost"><span data-icon="upload"></span><span class="label">Загрузить копию</span></button>
-            <input id="backup-file" type="file" accept="application/json,.json" hidden />
+            <input id="backup-file" type="file" accept="application/json,.json,.gz,application/gzip" hidden />
           </div>
         </section>
       </form>

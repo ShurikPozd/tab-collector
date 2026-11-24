@@ -2465,3 +2465,30 @@ button.chev:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* отметки «хочу / смотрю / готово» */
+.tag.mark {
+  font-weight: 600;
+}
+
+.tag.mark-want {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.tag.mark-doing {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.tag.mark-done {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* узко: отметки — в меню «Отметки ▾», как папки и сайты */
+@media (max-width: 900px) {
+  .nav-mark {
+    display: none;
+  }
+}

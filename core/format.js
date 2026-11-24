@@ -116,7 +116,22 @@ export function payloadItem(item, mode = "each", desc) {
 export function payload(mode, items, title = "", desc) {
   const body = { mode, items: items.map((it) => payloadItem(it, mode, desc)) };
   if (mode === "list" && title) body.title = clip(title, 120);
+  // один и тот же список (те же ссылки и заголовок) — один ключ: повтор после сбоя бот узнает
+  if (mode === "list") body.batchKey = batchKey(body.items.map((x) => x.url), body.title || "");
   return body;
+}
+
+/** Короткий устойчивый ключ набора ссылок (FNV-1a, 2×32 бита). */
+export function batchKey(urls, title = "") {
+  const text = [title, ...urls].join("\n");
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
+  }
+  return `tc-${a.toString(36)}${b.toString(36)}`;
 }
 
 export function bodySize(body) {
