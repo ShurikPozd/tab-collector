@@ -91,7 +91,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const pick = all.filter((t) => t.id !== tab.id && !untouchable(t, EXT) && siteOf(t.url) === site);
     if (!pick.length) return badge("0", tab.id);
     const res = await navigator.locks.request("tc-collect", () => collectTabs(pick));
-    return badge(String(res.added + res.merged), tab.id);
+    return badge(String(res.items.length), tab.id); // сколько вкладок закрыто (оставленные открытыми не в счёт)
   }
 });
 

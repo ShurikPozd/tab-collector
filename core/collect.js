@@ -67,6 +67,7 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   const items = [];
   const drafts = new Set();
   const unchecked = new Set(); // не успели проверить — тоже оставляем открытыми, но причина другая
+  const moved = new Set(); // перешли на неё или она сменила страницу, пока шёл сбор
   let done = 0;
   const queue = tabs.slice();
   const worker = async () => {
@@ -101,12 +102,13 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
       const cur = now.get(t.id);
       if (cur && !drafts.has(t.id) && ((cur.active && !t.active) || (cur.url !== saved.get(t.id) && cur.url !== t.url))) {
         drafts.add(t.id);
-        unchecked.add(t.id);
+        moved.add(t.id);
       }
     }
     res.items = items.filter((x) => !drafts.has(x.tabId)).map((x) => x.item);
-    res.kept = drafts.size - unchecked.size;
+    res.kept = drafts.size - unchecked.size - moved.size;
     res.unchecked = unchecked.size;
+    res.moved = moved.size; // вы на них перешли или они сменили страницу во время сбора
     const ids = tabs.map((t) => t.id).filter((id) => !drafts.has(id));
     for (let i = 0; i < ids.length; i += 50) {
       const part = ids.slice(i, i + 50);

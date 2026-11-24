@@ -550,6 +550,7 @@ function bindOpen() {
       res.merged ? `${res.merged} уже были в списке` : "",
       res.kept ? `${res.kept} с недописанным текстом оставлены открытыми` : "",
       res.unchecked ? `${res.unchecked} не успели проверить — оставлены открытыми` : "",
+      res.moved ? `${res.moved} — вы на них перешли или они сменили страницу, оставлены открытыми` : "",
     ]
       .filter(Boolean)
       .join(", ");
