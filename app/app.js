@@ -67,12 +67,16 @@ function groupItems(items) {
     groups.get(key).items.push(it);
   };
   if (st.groupBy === "batch") {
-    const sorted = items.slice().sort((a, b) => b.addedAt - a.addedAt);
+    // сбор помечен временем (batch) — по нему; у старых записей без пометки — по паузе больше 2 минут
+    const sorted = items.slice().sort((a, b) => (b.batch || b.addedAt) - (a.batch || a.addedAt));
     let cur = null;
     for (const it of sorted) {
-      if (!cur || cur.last - it.addedAt > 120000) {
-        cur = { key: `b:${it.addedAt}`, at: it.addedAt, last: it.addedAt };
+      if (it.batch) {
+        add(`b:${it.batch}`, it, () => ({ kind: "batch", at: it.batch }));
+        cur = null;
+        continue;
       }
+      if (!cur || cur.last - it.addedAt > 120000) cur = { key: `b:${it.addedAt}`, at: it.addedAt, last: it.addedAt };
       cur.last = it.addedAt;
       add(cur.key, it, () => ({ kind: "batch", at: cur.at }));
     }
@@ -81,7 +85,11 @@ function groupItems(items) {
   const byKind = st.filter.type === "site";
   for (const it of items) {
     if (byKind) add(`k:${it.kind}`, it, () => ({ kind: "kind", k: it.kind }));
-    else add(`s:${it.site}`, it, () => ({ kind: "site", site: it.site, sample: it }));
+    else {
+      // известные сайты — одной группой под своим именем (Shikimori .one и .io, Википедия ru и en)
+      const known = it.provider && it.provider !== "page";
+      add(known ? `p:${it.provider}` : `s:${it.site}`, it, () => ({ kind: "site", site: it.site, sample: it }));
+    }
   }
   return [...groups.values()].sort((a, b) => b.items.length - a.items.length);
 }
@@ -150,8 +158,8 @@ async function refreshShots() {
   st.shotStamps = stamps;
   const had = st.shotKeys;
   st.shotKeys = new Set(stamps.keys());
-  if (!prev.size || !changed.length) return false;
-  forgetShotKeys(changed);
+  if (!changed.length) return false;
+  if (prev.size) forgetShotKeys(changed);
   // переснятые — просто подменить картинку там, где она уже показана (без перерисовки и мигания)
   const retaken = changed.filter((k) => had.has(k) && st.shotKeys.has(k));
   for (const k of retaken)
@@ -187,7 +195,7 @@ function fillShots(root) {
 /** Перерисовать, сохранив фокус: после щелчка по флажку с клавиатуры фокус не уходит в начало. */
 function keepFocus(root, paint) {
   const a = document.activeElement;
-  const host = a && root.contains(a) ? a.closest("[data-tab], [data-id], [data-site], [data-f], .nav-pick") : null;
+  const host = a && root.contains(a) ? a.closest("[data-tab], [data-id], [data-site], [data-g], [data-f], .nav-pick") : null;
   const key =
     host &&
     (host.dataset.tab
@@ -196,6 +204,8 @@ function keepFocus(root, paint) {
         ? `[data-id="${CSS.escape(host.dataset.id)}"]`
         : host.dataset.site
           ? `[data-site="${CSS.escape(host.dataset.site)}"]`
+          : host.dataset.g
+            ? `[data-g="${CSS.escape(host.dataset.g)}"]`
           : host.dataset.f
             ? `[data-f="${CSS.escape(host.dataset.f)}"]`
             : host.classList.contains("nav-folders-btn")
@@ -446,7 +456,6 @@ function renderOpen() {
 
 /** Перейти к открытой вкладке. В панели панель остаётся, во вкладке сборщика — переключаемся. */
 async function goTab(tabId) {
-  // двойной щелчок успевает дважды переключить выбор — возвращаем как было
   const r = await chrome.runtime.sendMessage({ type: "focus-tab", tabId }).catch(() => null);
   if (!r || !r.ok) toast("Эта вкладка уже закрыта");
 }
@@ -477,19 +486,18 @@ function bindOpen() {
       return goTab(Number(go.closest(".row").dataset.tab));
     }
     const row = e.target.closest(".row");
-    if (row && !row.classList.contains("off")) {
+    if (!row) return;
+    // двойной щелчок — перейти к вкладке. Ловим по счётчику щелчков (e.detail): после первого
+    // щелчка строка перерисовывается, и обычное событие dblclick до списка не доходит.
+    const double = e.detail >= 2 && !e.target.closest("input");
+    if (!row.classList.contains("off")) {
       e.preventDefault();
       const id = Number(row.dataset.tab);
+      // второй щелчок возвращает выбор как было — двойной щелчок выбор не меняет
       st.openSel.has(id) ? st.openSel.delete(id) : st.openSel.add(id);
       renderOpen();
     }
-  });
-  // двойной щелчок по вкладке — перейти к ней (одиночный — выбрать)
-  $("open-list").addEventListener("dblclick", (e) => {
-    const row = e.target.closest(".row");
-    if (!row || e.target.closest("input, button")) return;
-    e.preventDefault();
-    goTab(Number(row.dataset.tab));
+    if (double) goTab(Number(row.dataset.tab));
   });
   $("open-all").addEventListener("change", (e) => {
     const tabs = visibleSelectable();
@@ -526,7 +534,13 @@ function bindOpen() {
     await reloadItems();
     await reloadTabs();
     render();
-    const extra = [res.merged ? `${res.merged} уже были в списке` : "", res.kept ? `${res.kept} с недописанным текстом оставлены открытыми` : ""].filter(Boolean).join(", ");
+    const extra = [
+      res.merged ? `${res.merged} уже были в списке` : "",
+      res.kept ? `${res.kept} с недописанным текстом оставлены открытыми` : "",
+      res.unchecked ? `${res.unchecked} не успели проверить — оставлены открытыми` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
     const closed = res.items; // вкладки с черновиками не закрывались — их и не открываем
     toast(`Собрано: ${nTabs(tabs.length)}${extra ? ` (${extra})` : ""}`, async () => {
       // «Вернуть»: открыть закрытые вкладки обратно (усыплёнными, на месте прокрутки) и убрать добавленные записи
@@ -620,7 +634,11 @@ function renderSide() {
   }
   const siteList = [...sites.entries()].sort((a, b) => b[1].n - a[1].n);
   // известные сайты — по имени (Shikimori), остальные — по адресу: «Тестовый блог» на трёх хостах не сольётся
-  const labelOf = (site, s) => (s.sample.provider && s.sample.provider !== "page" ? siteLabel(s.sample) : hostLabel(site));
+  const baseLabel = (site, s) => (s.sample.provider && s.sample.provider !== "page" ? siteLabel(s.sample) : hostLabel(site));
+  const labelCount = new Map();
+  for (const [site, s] of siteList) labelCount.set(baseLabel(site, s), (labelCount.get(baseLabel(site, s)) || 0) + 1);
+  // две «Википедии» (ru и en) — с адресом, чтобы отличать
+  const labelOf = (site, s) => (labelCount.get(baseLabel(site, s)) > 1 ? `${baseLabel(site, s)} · ${site}` : baseLabel(site, s));
   st.siteList = siteList.map(([site, s]) => ({ site, label: labelOf(site, s), n: s.n, sample: s.sample }));
   // на узком экране сайты — не длинной лентой, а одной кнопкой с меню
   if (sites.size) {
@@ -689,13 +707,19 @@ function renderLib() {
   renderSide();
   const vis = libVisible();
   $("lib-count").textContent = String(st.items.length || "");
-  const page = vis.slice(0, st.shown);
+  // «По сборам» — показываем от новых сборов к старым (в списке порядок может быть другим после загрузки копии)
+  const ordered = st.groupBy === "batch" ? vis.slice().sort((a, b) => (b.batch || b.addedAt) - (a.batch || a.addedAt)) : vis;
+  const page = ordered.slice(0, st.shown);
   const groups = groupItems(page);
   $("lib-list").classList.toggle("grouped", !!groups);
   let libHtml;
   if (groups) {
     // для флажка группы и счётчика — все ссылки группы в разделе, а не только показанные
-    const full = new Map((groupItems(vis) || []).map((g) => [g.key, g.items]));
+    const allGroups = groupItems(vis) || [];
+    const full = new Map(allGroups.map((g) => [g.key, g.items]));
+    // порядок групп — как у полного списка: «Показать ещё» не переставляет группы местами
+    const rank = new Map(allGroups.map((g, i) => [g.key, i]));
+    if (st.groupBy !== "batch") groups.sort((a, b) => (rank.get(a.key) ?? 1e9) - (rank.get(b.key) ?? 1e9));
     libHtml = groups
       .map((g) => {
         const closed = st.closedGroups.has(g.key);
@@ -710,6 +734,7 @@ function renderLib() {
   $("lib-list").querySelectorAll('input[data-ind="1"]').forEach((i) => (i.indeterminate = true));
   fillShots($("lib-list"));
   $("group-label").textContent = GROUP_LABEL[st.groupBy];
+  $("group-btn").setAttribute("aria-label", `Группы: ${GROUP_LABEL[st.groupBy]}`);
   const more = $("more-btn");
   more.hidden = vis.length <= st.shown;
   more.textContent = `Показать ещё ${Math.min(PAGE, vis.length - st.shown)}`;
@@ -794,7 +819,7 @@ function placeMenu(anchor) {
   menu.hidden = false;
   menuOpener = anchor;
   anchor.setAttribute("aria-expanded", "true");
-  menu.querySelectorAll("button").forEach((b) => b.setAttribute("role", "menuitem"));
+  menu.querySelectorAll("button").forEach((b) => b.setAttribute("role", b.hasAttribute("aria-checked") ? "menuitemradio" : "menuitem"));
   const r = anchor.getBoundingClientRect();
   const w = menu.offsetWidth;
   menu.style.left = `${Math.max(16, Math.min(r.left, innerWidth - w - 16))}px`;
@@ -890,9 +915,10 @@ function bindLib() {
       if (e.target.closest(".lg-chk")) {
         e.preventDefault();
         const g = (groupItems(libVisible()) || []).find((x) => x.key === key);
-        if (!g) return;
-        const allOn = g.items.every((it) => st.libSel.has(it.id));
-        for (const it of g.items) allOn ? st.libSel.delete(it.id) : st.libSel.add(it.id);
+        const list = g ? g.items : [...gh.parentElement.querySelectorAll(".card")].map((c) => st.items.find((it) => it.id === c.dataset.id)).filter(Boolean);
+        if (!list.length) return;
+        const allOn = list.every((it) => st.libSel.has(it.id));
+        for (const it of list) allOn ? st.libSel.delete(it.id) : st.libSel.add(it.id);
       } else {
         st.closedGroups.has(key) ? st.closedGroups.delete(key) : st.closedGroups.add(key);
         saveClosed();
@@ -962,7 +988,7 @@ function bindLib() {
       e.stopPropagation();
       closeMenu(true);
     } else if (e.key === "Tab") {
-      closeMenu(); // фокус ушёл из меню — меню не висит открытым
+      closeMenu(true); // меню закрывается, фокус — на его кнопку, дальше Tab идёт от неё
     }
   });
   $("folder-menu").addEventListener("click", async (e) => {
@@ -1061,7 +1087,7 @@ function onTabsChanged() {
   tabsTimer = setTimeout(async () => {
     await reloadTabs();
     renderOpen();
-    renderLib(); // «● открыта» у собранных
+    if (st.view === "library") renderLib(); // «● открыта» у собранных (скрытый раздел нарисуется при переходе)
   }, 250);
   // фон снимает страницу ~через секунду после перехода — тогда и обновим миниатюры (и в панели)
   clearTimeout(shotsTimer);

@@ -66,6 +66,7 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   const startedAt = Date.now(); // одно время на весь сбор — по нему «Собранные» группируются «по сборам»
   const items = [];
   const drafts = new Set();
+  const unchecked = new Set(); // не успели проверить — тоже оставляем открытыми, но причина другая
   let done = 0;
   const queue = tabs.slice();
   const worker = async () => {
@@ -74,10 +75,12 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
       const g = await grab(tab);
       // недописанный текст: проверка как у «Усыпить» (все кадры, shadow DOM); не успели — не закрываем
       const loaded = !tab.discarded && tab.status !== "unloaded" && /^https?:/.test(tab.url);
-      if (g.draft || (loaded && (await draftIn(tab)) !== "no")) drafts.add(tab.id);
+      const check = g.draft ? "yes" : loaded ? await draftIn(tab) : "no";
+      if (check !== "no") drafts.add(tab.id);
+      if (check === "unknown") unchecked.add(tab.id);
       // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы
       const t = g.url && /^https?:/.test(g.url) ? { ...tab, url: g.url } : tab;
-      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g, startedAt), draft: !!g.draft });
+      items.push({ order: tabs.indexOf(tab), item: makeItem(t, g, startedAt, startedAt), draft: drafts.has(tab.id) });
       done++;
       onProgress && onProgress(done, tabs.length);
     }
@@ -86,7 +89,8 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   items.sort((a, b) => a.order - b.order);
   const res = await addItems(items.map((x) => x.item));
   res.items = items.filter((x) => !x.draft).map((x) => x.item); // только те, что закрываем (для «Вернуть»)
-  res.kept = drafts.size;
+  res.kept = drafts.size - unchecked.size; // с недописанным текстом
+  res.unchecked = unchecked.size; // не успели проверить
   // закрываем только после того, как список записан: ничего не теряется
   if (close) {
     const ids = tabs.map((t) => t.id).filter((id) => !drafts.has(id));

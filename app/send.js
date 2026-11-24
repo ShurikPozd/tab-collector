@@ -126,6 +126,7 @@ async function go() {
     const before = items.length;
     items = items.filter((it) => fresh.has(it.id) && (fresh.get(it.id).sentAt || null) === (sentBefore.get(it.id) || null));
     if (before && !items.length) return { allSentElsewhere: true };
+    if (items.length < before) $("send-count").innerHTML = `Отправить: <b>${esc(linksWord(items.length))}</b> (остальные уже отправили или удалили в другом окне)`;
     return sendLinks(items, m, {
     title: $("list-title").value.trim(),
     desc: descChoice(m),
@@ -157,7 +158,8 @@ async function go() {
     return;
   }
   if (res.allSentElsewhere) {
-    status("Эти ссылки уже отправили из другого окна сборщика.", "ok");
+    status("Эти ссылки уже отправили или удалили в другом окне сборщика.", "ok");
+    $("send-count").textContent = "Отправлять нечего";
     $("send-go").disabled = true;
     return;
   }

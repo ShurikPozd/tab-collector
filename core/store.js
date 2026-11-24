@@ -16,7 +16,7 @@ export function uid() {
 }
 
 /** Новая запись из вкладки (tab) и того, что успели прочитать со страницы (grab). */
-export function makeItem(tab, grab = {}, now = Date.now()) {
+export function makeItem(tab, grab = {}, now = Date.now(), batch = null) {
   let r = recognize(tab.url);
   // сайт без своего распознавания: тип — по og:type страницы (статья, видео, товар…)
   if (r.kind === "page" && grab.ogType) r = { ...r, ...kindMeta(kindFromOgType(grab.ogType)) };
@@ -43,6 +43,7 @@ export function makeItem(tab, grab = {}, now = Date.now()) {
     scrollY: Math.max(0, Math.round(grab.scrollY || 0)),
     folder: null,
     addedAt: now,
+    batch, // время сбора: всё, что собрано за один раз, — с одним значением («По сборам»)
     sentAt: null,
     sentCategory: "",
     // известные сайты — уточняем через API; остальные — если страница не отдала описания
@@ -90,7 +91,8 @@ export async function load() {
  * иначе та же ссылка, собранная снова, не узнаётся как уже собранная.
  */
 const KEYS_VERSION = 3;
-export function migrateKeys() {
+export async function migrateKeys() {
+  if (((await loadSettings()).keysVersion || 0) >= KEYS_VERSION) return 0; // без чтения всей базы
   return update(async (d) => {
     if ((d.settings.keysVersion || 0) >= KEYS_VERSION) return 0;
     let n = 0;

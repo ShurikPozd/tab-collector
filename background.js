@@ -4,6 +4,7 @@
 import { collectTabs, sleepTabs, untouchable } from "./core/collect.js";
 import { siteOf, normalizeUrl, collectable } from "./core/url.js";
 import { putShot, shrink, pruneShots } from "./core/shots.js";
+import { migrateKeys } from "./core/store.js";
 
 const APP = chrome.runtime.getURL("app/app.html");
 const EXT = chrome.runtime.getURL("");
@@ -68,6 +69,8 @@ chrome.runtime.onStartup.addListener(menus);
 // старые снимки — сверх 3000 — убираем при запуске браузера и обновлении расширения
 chrome.runtime.onInstalled.addListener(() => pruneShots().catch(() => {}));
 chrome.runtime.onStartup.addListener(() => pruneShots().catch(() => {}));
+chrome.runtime.onInstalled.addListener(() => migrateKeys().catch(() => {}));
+chrome.runtime.onStartup.addListener(() => migrateKeys().catch(() => {}));
 
 async function badge(text, tabId) {
   await chrome.action.setBadgeBackgroundColor({ color: "#6d5efc" });

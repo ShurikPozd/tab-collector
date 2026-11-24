@@ -25,16 +25,19 @@ async function flush(patches) {
   if (!patches.size) return;
   const batch = new Map(patches);
   patches.clear();
-  await update((d) => {
-    for (const it of d.items) {
-      const p = batch.get(it.id);
-      if (!p) continue;
-      if (it.enrich !== "pending") continue; // другая страница уже уточнила — не затираем
-      for (const k of FIELDS) if (p[k]) it[k] = p[k];
-      it.enrich = p.enrich;
-    }
-  });
-  for (const id of batch.keys()) seen.delete(id);
+  try {
+    await update((d) => {
+      for (const it of d.items) {
+        const p = batch.get(it.id);
+        if (!p) continue;
+        if (it.enrich !== "pending") continue; // другая страница уже уточнила — не затираем
+        for (const k of FIELDS) if (p[k]) it[k] = p[k];
+        it.enrich = p.enrich;
+      }
+    });
+  } finally {
+    for (const id of batch.keys()) seen.delete(id); // и при сбое записи — чтобы не висели «уточняю…»
+  }
 }
 
 // Уточняет только одна страница (вкладка или любая из панелей): замок общий для всех —
