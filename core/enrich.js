@@ -169,12 +169,17 @@ const stripTags = (s) =>
     .replace(BLOCK, " ")
     .replace(/<\/?[a-z][^>]*>/gi, "");
 // после раскодирования «<Ctrl>» — уже обычный текст: убираем только настоящие теги
-const stripKnownTags = (s) =>
-  s
-    .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, " ")
-    .replace(BLOCK, " ")
-    .replace(/<\/?(dl|dt|dd|th|thead|tbody|tfoot|header|footer|figure|figcaption)\b[^>]*>/gi, " ")
-    .replace(/<\/?(span|b|i|u|s|strong|em|a|code|pre|small|sup|sub|font|img|hr|mark|del|ins|wbr|nobr|abbr|label|q|cite)\b[^>]*>/gi, "");
+// строчные теги — только парой «<b>…</b>»: одиночное «<Del>» в тексте — название клавиши
+const INLINE = /<(span|b|i|u|s|strong|em|a|code|small|sup|sub|font|mark|del|ins|nobr|abbr|label|q|cite)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+function stripKnownTags(s) {
+  s = s.replace(BLOCK, " ").replace(/<\/?(dl|dt|dd|th|thead|tbody|tfoot|header|footer|figure|figcaption|pre)\b[^>]*>/gi, " ");
+  s = s.replace(/<(br|hr|wbr|img)\b[^>]*\/?>/gi, " ");
+  for (let i = 0, prev; i < 5 && prev !== s; i++) {
+    prev = s;
+    s = s.replace(INLINE, "$2"); // вложенные — за несколько проходов
+  }
+  return s;
+}
 
 /** HTML → чистый текст (описание вакансии и т.п.). Дважды: разметка бывает заэкранирована ещё раз. */
 export function htmlText(s) {
@@ -440,7 +445,7 @@ async function getJSON(url, init = {}, timeout = 12000) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeout);
   try {
-    const r = await fetch(url, { ...init, signal: ctl.signal });
+    const r = await fetch(url, { credentials: "omit", ...init, signal: ctl.signal });
     if (r.status === 429) throw Object.assign(new Error("rate"), { retry: true });
     if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
     return await r.json();

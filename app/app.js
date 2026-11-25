@@ -598,7 +598,10 @@ function bindOpen() {
       const worker = async () => {
         while (queue.length) {
           const t = queue.shift();
-          const d = await draftIn(t);
+          // состояние — свежее: спящую копию могли разбудить и начать в ней писать
+          const cur = await chrome.tabs.get(t.id).catch(() => null);
+          if (!cur) continue;
+          const d = await draftIn(cur);
           if (d !== "no") {
             d === "yes" ? skipped++ : unknown++; // недописанный текст или не успели проверить — не трогаем
             continue;
@@ -623,7 +626,7 @@ function bindOpen() {
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(8, queue.length) }, worker));
+      await navigator.locks.request("tc-collect", () => Promise.all(Array.from({ length: Math.min(8, queue.length) }, worker)));
     } finally {
       st.collecting = false;
       await reloadTabs();
@@ -1206,7 +1209,7 @@ function bindLib() {
   $("enrich-line").addEventListener("click", (e) => {
     if (e.target.id === "retry-enrich") {
       e.preventDefault();
-      retryFailed();
+      retryFailed(st.items.filter((it) => it.enrich === "failed" && !it.description).map((it) => it.id)).catch(() => {});
     }
   });
 }

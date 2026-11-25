@@ -107,6 +107,11 @@ function bind() {
       ctl.abort();
     }
   });
+  // второй Esc подряд Chrome отменить не даёт — окно закрылось бы, а отправка шла бы невидимо:
+  // пока она идёт (до остановки), окно возвращаем на место
+  dlg.addEventListener("close", () => {
+    if (ctl) dlg.showModal();
+  });
   $("send-go").addEventListener("click", go);
 }
 

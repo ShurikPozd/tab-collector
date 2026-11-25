@@ -7,7 +7,7 @@
 // Все записи — через update(): прочитать → изменить → записать только изменившееся.
 // Старый формат (весь список одним ключом items) переносится при первой записи.
 
-import { normalizeUrl, recognize, kindFromOgType, kindMeta } from "./url.js";
+import { normalizeUrl, recognize, kindFromOgType, kindMeta, KINDS } from "./url.js";
 import { clip } from "./format.js";
 
 const area = () => chrome.storage.local;
@@ -269,7 +269,7 @@ export function importData(data) {
     const keys = new Set(d.items.map((it) => it.nkey));
     const folderIds = new Set(d.folders.map((f) => f.id));
     for (const f of data.folders || []) {
-      if (!f || typeof f.id !== "string" || !/^[\w-]{1,60}$/.test(f.id) || typeof f.name !== "string" || folderIds.has(f.id)) continue;
+      if (!f || typeof f.id !== "string" || !/^[\w-]{1,60}$/.test(f.id) || typeof f.name !== "string" || !f.name.trim() || folderIds.has(f.id)) continue;
       d.folders.push({ id: f.id, name: f.name.slice(0, 60) });
       folderIds.add(f.id);
     }
@@ -281,7 +281,10 @@ export function importData(data) {
       const key = normalizeUrl(raw.url);
       if (keys.has(key)) continue;
       const it = makeItem({ url: raw.url, title: String(raw.title || ""), favIconUrl: String(raw.favicon || "") }, {}, Number(raw.addedAt) || Date.now());
-      for (const k of ["title", "meta", "description", "siteName", "sentCategory"]) if (typeof raw[k] === "string" && raw[k]) it[k] = raw[k].slice(0, 600);
+      for (const k of ["title", "meta", "description", "siteName", "sentCategory"]) if (typeof raw[k] === "string" && raw[k]) it[k] = raw[k].slice(0, k === "title" ? 300 : 600);
+      // тип, найденный по og:type (статья, видео…), распознаванием по адресу не восстановить
+      if (it.kind === "page" && typeof raw.kind === "string" && raw.kind !== "page" && KINDS[raw.kind]) Object.assign(it, kindMeta(raw.kind), { kindLocked: true });
+      if (Number(raw.scrollY) > 0) it.scrollY = Math.round(Number(raw.scrollY));
       if (typeof raw.image === "string" && /^https:\/\//.test(raw.image)) it.image = raw.image;
       if (raw.sentAt) it.sentAt = Number(raw.sentAt) || null;
       if (["want", "doing", "done"].includes(raw.mark)) it.mark = raw.mark; // отметки «хочу / смотрю / готово»

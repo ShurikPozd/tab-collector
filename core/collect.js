@@ -75,8 +75,10 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
       const tab = queue.shift();
       const g = await grab(tab);
       // недописанный текст: проверка как у «Усыпить» (все кадры, shadow DOM); не успели — не закрываем
-      const loaded = !tab.discarded && tab.status !== "unloaded" && /^https?:/.test(tab.url);
-      const check = g.draft ? "yes" : loaded ? await draftIn(tab) : "no";
+      // состояние — свежее: спящую вкладку могли разбудить и начать в ней писать, пока шёл сбор
+      const cur = (await chrome.tabs.get(tab.id).catch(() => null)) || tab;
+      const loaded = !cur.discarded && cur.status !== "unloaded" && /^https?:/.test(cur.url);
+      const check = g.draft ? "yes" : loaded ? await draftIn(cur) : "no";
       if (check !== "no") drafts.add(tab.id);
       if (check === "unknown") unchecked.add(tab.id);
       // вкладка могла перейти на другую страницу, пока шёл сбор: адрес и название — с одной страницы

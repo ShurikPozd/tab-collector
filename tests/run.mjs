@@ -517,7 +517,11 @@ t("описания без разметки, даже заэкранирован
   // раскодированный «<Ctrl>» — обычный текст, не тег
   assert.equal(htmlText("Нажмите &lt;Ctrl&gt; и &lt;Enter&gt;"), "Нажмите <Ctrl> и <Enter>");
   assert.equal(htmlText("Love &lt;3"), "Love <3");
-  assert.equal(htmlText("&lt;dl&gt;&lt;dt&gt;Опыт&lt;/dt&gt;&lt;dd&gt;&lt;mark&gt;3 года&lt;/mark&gt;&lt;/dd&gt;&lt;/dl&gt;&lt;script&gt;x()&lt;/script&gt;"), "Опыт 3 года");
+  assert.equal(htmlText("&lt;dl&gt;&lt;dt&gt;Опыт&lt;/dt&gt;&lt;dd&gt;&lt;mark&gt;3 года&lt;/mark&gt;&lt;/dd&gt;&lt;/dl&gt;"), "Опыт 3 года");
+  // одиночные «<Del>», «<Ins>» — названия клавиш, не теги; заэкранированный «<script>» — текст вакансии
+  assert.equal(htmlText("Нажмите &lt;Ctrl&gt;+&lt;Alt&gt;+&lt;Del&gt; или &lt;Ins&gt;"), "Нажмите <Ctrl>+<Alt>+<Del> или <Ins>");
+  assert.equal(htmlText("Знание &lt;script&gt; и &lt;style&gt;, конец"), "Знание <script> и <style>, конец");
+  assert.equal(htmlText("&lt;p&gt;Это &lt;b&gt;&lt;i&gt;важно&lt;/i&gt;&lt;/b&gt;&lt;br/&gt;да&lt;/p&gt;"), "Это важно да");
 });
 t("hh.ru без schema.org: заголовок со страницы", () => {
   const html = '<meta property="og:title" content="Вакансия Специалист в IT-отдел, работа в компании Х"><h1 data-qa="vacancy-title" class="x"><span>Специалист в IT-отдел</span></h1>';

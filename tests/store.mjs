@@ -152,5 +152,15 @@ await t("миграция склеивает зеркала с одним клю
   await removeItems(left.map((x) => x.id));
 });
 
+await t("копия сохраняет тип страницы и место прокрутки", async () => {
+  await importData({ items: [{ url: "https://blog.example/post-1", title: "Пост", kind: "article", scrollY: 500 }, { url: "https://blog.example/post-2", kind: "<x>" }], folders: [{ id: "f-1", name: "  " }] });
+  const all = (await load()).items;
+  const a = all.find((i) => i.url === "https://blog.example/post-1");
+  assert.equal(a.kind, "article");
+  assert.equal(a.scrollY, 500);
+  assert.equal(all.find((i) => i.url === "https://blog.example/post-2").kind, "page");
+  assert.ok(!(await load()).folders.some((f) => f.id === "f-1")); // пустое имя папки не берём
+});
+
 console.log(`${ok} OK, ${fail} FAIL (хранилище)`);
 process.exit(fail ? 1 : 0);
