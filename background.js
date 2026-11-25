@@ -190,7 +190,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         const already = msg.force ? null : openByKey.get(normalizeUrl(it.url));
         if (already) {
           // одна ссылка — переключаемся на её вкладку; из нескольких — просто не открываем вторую копию
-          if (msg.items.length === 1) await focusTab(already.id);
+          if (msg.items.length === 1 && !msg.restore) await focusTab(already.id);
           switched++;
           opened.push(it.url);
           continue;

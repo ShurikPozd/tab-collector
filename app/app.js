@@ -225,11 +225,14 @@ function keepFocus(root, paint) {
   paint();
   if (!key) return;
   let again = root.querySelector(key);
+  let near = role;
   if (!again && pos >= 0) {
     const rest = root.querySelectorAll(kind);
     again = rest[Math.min(pos, rest.length - 1)] || null;
+    // на соседней — флажок или ссылка, не та же кнопка: зажатый Enter на «Убрать» удалял бы подряд
+    near = "input, a[data-open]";
   }
-  const target = again && (role ? again.querySelector(role) || again : again);
+  const target = again && (near ? again.querySelector(near) || again : again);
   if (target && target.focus) target.focus({ preventScroll: true });
 }
 
@@ -318,7 +321,9 @@ export function toast(text, undo) {
     document.addEventListener("keydown", (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.code !== "KeyZ") return;
       if (el.hidden || btn.hidden || !btn.onclick || document.querySelector("dialog[open]")) return;
-      if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+      // в текстовых полях Ctrl+Z — их собственная отмена; флажки и кнопки не в счёт
+      const a = document.activeElement;
+      if (a.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"]):not([type="button"])') || a.isContentEditable) return;
       e.preventDefault();
       btn.onclick();
     });

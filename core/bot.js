@@ -29,21 +29,32 @@ export async function defaultBaseUrl() {
   return ((await localConfig()).baseUrl || DEFAULTS.baseUrl).replace(/\/+$/, "");
 }
 
-// часть списка, ушедшая боту без ответа «принято» (он мог и создать пост): записи и сам запрос —
-// чтобы повторить её слово в слово. До перезапуска браузера
-const UNCONFIRMED = "tc-unconfirmed-part";
+// части списков, ушедшие боту без ответа «принято» (он мог и создать пост): ключ → записи и сам
+// запрос, чтобы повторить слово в слово. Бот помнит повторы сутки — дольше и мы не храним
+const UNCONFIRMED = "tc-unconfirmed-parts";
+const UNCONFIRMED_TTL = 23 * 3600 * 1000;
+const sentMark = (part) => part.map((it) => +it.sentAt || 0).join(",");
 async function unconfirmed() {
   try {
-    const v = (await chrome.storage.session.get(UNCONFIRMED))[UNCONFIRMED];
-    return v && Array.isArray(v.ids) && v.body && Array.isArray(v.body.items) ? v : null;
+    const all = (await chrome.storage.session.get(UNCONFIRMED))[UNCONFIRMED] || {};
+    const now = Date.now();
+    return Object.fromEntries(
+      Object.entries(all).filter(([, v]) => v && Array.isArray(v.ids) && v.body && Array.isArray(v.body.items) && now - v.at < UNCONFIRMED_TTL)
+    );
   } catch (e) {
-    return null;
+    return {};
   }
 }
-async function setUnconfirmed(v) {
+async function rememberPart(key, v) {
   try {
-    if (v) await chrome.storage.session.set({ [UNCONFIRMED]: v });
-    else await chrome.storage.session.remove(UNCONFIRMED);
+    await navigator.locks.request("tc-unconfirmed", async () => {
+      const all = await unconfirmed();
+      if (v) all[key] = v;
+      else delete all[key];
+      // самые свежие 30 — старее бот всё равно не узнает
+      const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, 30);
+      await chrome.storage.session.set({ [UNCONFIRMED]: Object.fromEntries(keep) });
+    });
   } catch (e) {
     /* без памяти — разобьём заново */
   }
@@ -134,13 +145,17 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
   const sameBody = new Map(); // часть → прежний запрос
   if (mode === "list") {
     const byId = new Map(good.map((it) => [it.id, it]));
-    const prev = await unconfirmed();
-    const first = prev ? prev.ids.map((id) => byId.get(id)).filter(Boolean) : [];
-    if (first.length && first.length === prev.ids.length) {
-      const used = new Set(prev.ids);
-      queue = [first, ...batches("list", good.filter((it) => !used.has(it.id)))];
-      sameBody.set(first, prev.body);
+    const used = new Set();
+    const fixed = [];
+    for (const prev of Object.values(await unconfirmed()).sort((a, b) => a.at - b.at)) {
+      const part = prev.ids.map((id) => byId.get(id)).filter(Boolean);
+      // те же записи и с тех пор не отправлены другим путём (иначе это уже сознательная повторная отправка)
+      if (!part.length || part.length !== prev.ids.length || part.some((it) => used.has(it.id)) || sentMark(part) !== prev.sent) continue;
+      part.forEach((it) => used.add(it.id));
+      fixed.push(part);
+      sameBody.set(part, prev.body);
     }
+    if (fixed.length) queue = [...fixed, ...batches("list", good.filter((it) => !used.has(it.id)))];
   }
   queue = queue || batches(mode, good);
   const total = queue.length;
@@ -175,7 +190,7 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
     // сознательная повторная отправка — суффикс по времени прошлой отправки, а не по текущему:
     // если ответ бота потерялся, следующая попытка даст тот же ключ, и второго поста не будет
     if (body.batchKey && again && !sameBody.has(part)) body.batchKey += `-r${Math.max(...part.map((it) => +it.sentAt || 0)).toString(36)}`;
-    if (mode === "list") await setUnconfirmed({ ids: part.map((it) => it.id), body });
+    if (mode === "list" && !sameBody.has(part)) await rememberPart(body.batchKey, { ids: part.map((it) => it.id), body, sent: sentMark(part), at: Date.now() });
     const r = await post("/api/save-links", body, s, undefined, signal);
     if (r.aborted || aborted()) break;
     const retryAfter = Math.max(5, Number((r.data && r.data.retryAfter) || 0));
@@ -204,7 +219,7 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
     if (r.status !== 200 || !r.data || !r.data.ok) {
       out.error = sleepy && r.ms >= QUICK ? "Бот не ответил вовремя. Проверьте чат бота — часть ссылок могла сохраниться; остальные остались в «Не отправлены»." : botError(r.status, r.data);
       // бот запрос отклонил (секрет, размер, формат) — поста точно нет, повторять слово в слово незачем
-      if (mode === "list" && r.status >= 400 && r.status < 500) await setUnconfirmed(null);
+      if (mode === "list" && r.status >= 400 && r.status < 500) await rememberPart(body.batchKey, null);
       break;
     }
     wakeTries = 0;
@@ -230,7 +245,7 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
           : "Бот не смог сохранить часть списка в архив — ссылки остались в «Не отправлены». Попробуйте отправить ещё раз.";
         break;
       }
-      await setUnconfirmed(null);
+      await rememberPart(body.batchKey, null);
       if (r.data.status !== "exists") out.posts += Number(r.data.parts) || 1; // повтор — без нового поста
       if (r.data.status === "exists") out.exists += part.length;
       for (const it of part) batch.set(it.id, { status: r.data.status === "exists" ? "exists" : "saved", category: r.data.category, icon: r.data.icon });

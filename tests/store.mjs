@@ -202,6 +202,20 @@ await t("часть списка без ответа бота повторяет
   status = 200;
   await sendLinks(later, "list", { title: "X" });
   assert.ok(bodies[4].items[0].description);
+  // другая отправка между попытками память не стирает; уже отправленное другим путём — не старым запросом
+  const A = [3, 4].map((i) => ({ ...makeItem({ url: `https://ex.ru/a${i}`, title: `A${i}` }, {}, 1), id: `a${i}` }));
+  const B = [5].map((i) => ({ ...makeItem({ url: `https://ex.ru/b${i}`, title: `B${i}` }, {}, 1), id: `b${i}` }));
+  status = 500;
+  await sendLinks(A, "list", { title: "A" }); // bodies[5]
+  status = 200;
+  await sendLinks(B, "list", { title: "B" }); // bodies[6]
+  await sendLinks(A.map((it) => ({ ...it, description: "уточнено" })), "list", { title: "" }); // bodies[7]
+  assert.deepEqual(bodies[7], bodies[5]);
+  status = 500;
+  await sendLinks(B, "list", { title: "B2" }); // bodies[8]
+  status = 200;
+  await sendLinks(B.map((it) => ({ ...it, sentAt: 9 })), "list", { title: "B2" }); // bodies[9]
+  assert.notEqual(bodies[9].batchKey, bodies[8].batchKey);
 });
 
 console.log(`${ok} OK, ${fail} FAIL (хранилище)`);
