@@ -218,7 +218,7 @@ function keepFocus(root, paint) {
               : host.classList.contains("nav-marks-btn")
                 ? ".nav-marks-btn"
                 : ".nav-sites-btn");
-  const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
+  const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-go]") ? "[data-go]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
   // место карточки среди соседних: если её уберут из списка, фокус перейдёт на ту, что встала на её место
   const kind = host && (host.dataset.id ? "[data-id]" : host.dataset.tab ? "[data-tab]" : "");
   const pos = kind ? [...root.querySelectorAll(kind)].indexOf(host) : -1;
@@ -230,11 +230,33 @@ function keepFocus(root, paint) {
     const rest = root.querySelectorAll(kind);
     again = rest[Math.min(pos, rest.length - 1)] || null;
     // на соседней — флажок или ссылка, не та же кнопка: зажатый Enter на «Убрать» удалял бы подряд
-    near = "input, a[data-open]";
+    near = "input:not(:disabled), a[data-open], [data-go]";
   }
   const target = again && (near ? again.querySelector(near) || again : again);
-  if (target && target.focus) target.focus({ preventScroll: true });
+  if (target && target.focus && !target.disabled && target.getClientRects().length) target.focus({ preventScroll: true });
+  fixFocus();
 }
+
+/**
+ * Фокус потерялся (его кнопку выключили, спрятали или пересоздали — например, «В Telegram» после
+ * отправки или «Закрыть дубли», когда дублей не осталось) — не роняем его в начало страницы,
+ * а ставим на текущий список: следующий Tab пойдёт с него.
+ */
+let lastFocus = null;
+document.addEventListener("focusin", (e) => {
+  if (e.target !== document.body) lastFocus = e.target;
+});
+function fixFocus() {
+  const a = document.activeElement;
+  if (a && a !== document.body && !a.disabled && a.getClientRects().length) return;
+  if (document.querySelector("dialog[open]") || !lastFocus) return;
+  // фокус убрали сознательно (щелчок мышью по пустому месту) — не трогаем
+  if (lastFocus.isConnected && !lastFocus.disabled && lastFocus.getClientRects().length) return;
+  lastFocus = null;
+  $(st.view === "library" ? "lib-list" : "open-list").focus({ preventScroll: true });
+}
+// окно закрылось и вернуло фокус на кнопку, которую тем временем выключили
+document.addEventListener("close", () => setTimeout(fixFocus), true);
 
 // ---------------------------------------------------------------- утилиты
 
@@ -367,11 +389,12 @@ async function reloadItems() {
   st.items = d.items;
   st.folders = d.folders;
   st.settings = d.settings;
-  if (st.filter.type === "folder" && !st.folders.some((f) => f.id === st.filter.id)) st.filter = { type: "all" };
-  if (st.filter.type === "mark" && !st.items.some((it) => it.mark === st.filter.mark)) st.filter = { type: "all" };
-  // действия — только над тем, что есть в разделе: ушедшие из него (удалены, отправлены, сменилась отметка) снимаем
+  // действия — только над тем, что есть в разделе: ушедшие из него (удалены, отправлены, сменилась отметка) снимаем.
+  // По прежнему разделу — до того, как опустевший сменится на «Все ссылки»
   const byId = new Map(st.items.map((it) => [it.id, it]));
   for (const id of st.libSel) if (!byId.has(id) || !inFilter(byId.get(id))) st.libSel.delete(id);
+  if (st.filter.type === "folder" && !st.folders.some((f) => f.id === st.filter.id)) st.filter = { type: "all" };
+  if (st.filter.type === "mark" && !st.items.some((it) => it.mark === st.filter.mark)) st.filter = { type: "all" };
 }
 
 async function reloadTabs() {
@@ -516,6 +539,7 @@ function renderOpen() {
   $("dups-btn").disabled = !!st.collecting;
   $("collect-btn").disabled = !sel || !!st.collecting;
   $("sleep-btn").disabled = !sel || !!st.collecting;
+  fixFocus();
 }
 
 /** Перейти к открытой вкладке. В панели панель остаётся, во вкладке сборщика — переключаемся. */
@@ -922,8 +946,10 @@ function renderLib() {
     line.textContent = `Уточняю описания у сайтов: осталось ${st.enrichLeft}`;
   } else if (failed) {
     line.hidden = false;
-    line.innerHTML = `${esc(nLinks(failed))} без описания — сайт не ответил. <a href="#" id="retry-enrich">Попробовать ещё раз</a>`;
+    const h = `${esc(nLinks(failed))} без описания — сайт не ответил. <a href="#" id="retry-enrich">Попробовать ещё раз</a>`;
+    if (line.innerHTML !== h) line.innerHTML = h; // ссылку в фокусе не пересоздаём
   } else line.hidden = true;
+  fixFocus();
 }
 
 function filterName() {
@@ -1060,7 +1086,11 @@ function bindLib() {
         const f = await addFolder(name);
         await reloadItems();
         st.filter = { type: "folder", id: f.id };
+        st.shown = PAGE;
+        st.libSel.clear();
         renderLib();
+        const item = [...document.querySelectorAll(".nav-item[data-f]")].find((x) => JSON.parse(x.dataset.f).id === f.id);
+        if (item) item.focus({ preventScroll: true });
       }
       return;
     }
@@ -1087,6 +1117,7 @@ function bindLib() {
     if (await confirmDlg("Удалить папку?", `Папка «${folder.name}» исчезнет, ссылки из неё останутся в списке.`, "Удалить папку")) {
       await deleteFolder(folder.id);
       st.filter = { type: "all" };
+      st.libSel.clear(); // раздел сменился — действия только над тем, что видно
       await reloadItems();
       renderLib();
     }
@@ -1142,8 +1173,13 @@ function bindLib() {
     renderLib();
   });
   $("more-btn").addEventListener("click", () => {
+    const was = $("lib-list").querySelectorAll("[data-id]").length;
     st.shown += PAGE;
     renderLib();
+    if (document.activeElement === $("more-btn")) return;
+    const first = $("lib-list").querySelectorAll("[data-id]")[was];
+    const f = first && first.querySelector("input:not(:disabled), a[data-open]");
+    if (f) f.focus();
   });
   $("open-btn").addEventListener("click", () => openItems(selectedItems()));
   $("delete-btn").addEventListener("click", () => deleteItems([...st.libSel]));

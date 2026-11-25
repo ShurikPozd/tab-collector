@@ -245,7 +245,6 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
           : "Бот не смог сохранить часть списка в архив — ссылки остались в «Не отправлены». Попробуйте отправить ещё раз.";
         break;
       }
-      await rememberPart(body.batchKey, null);
       if (r.data.status !== "exists") out.posts += Number(r.data.parts) || 1; // повтор — без нового поста
       if (r.data.status === "exists") out.exists += part.length;
       for (const it of part) batch.set(it.id, { status: r.data.status === "exists" ? "exists" : "saved", category: r.data.category, icon: r.data.icon });
@@ -254,6 +253,8 @@ export async function sendLinks(items, mode, { title = "", desc, onStep, onBatch
     }
     for (const [id, x] of batch) out.results.set(id, x);
     if (onBatch) await onBatch(batch);
+    // память о части — только после отметки «отправлено»: закроют окно между шагами — повтор её пропустит
+    if (mode === "list") await rememberPart(body.batchKey, null);
     onStep && onStep({ sent, total: good.length, waiting: 0 });
     if (later.length) {
       queue.unshift(later);
