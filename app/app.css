@@ -313,6 +313,22 @@ svg {
   color: var(--fg);
 }
 
+/* «Текущую вкладку — в Telegram»: главная быстрая кнопка — цветом акцента */
+.icon-btn.send-now {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent-ink);
+}
+
+.icon-btn.send-now:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.icon-btn.send-now[aria-busy="true"] svg {
+  animation: spin 0.9s linear infinite;
+}
+
 .progress {
   position: absolute;
   left: 0;

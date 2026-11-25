@@ -94,16 +94,22 @@ function sendNote(text) {
     .catch(() => {});
 }
 
-async function sendToBot(tab, linkUrl) {
+// notify: false — когда спрашивает сборщик (он сам покажет итог); возвращает { ok, text, title }
+async function sendToBot(tab, linkUrl, { notify = true } = {}) {
   if (!tab || tab.id == null) [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab) return;
+  if (!tab) return { ok: false, text: "Нет текущей вкладки." };
+  const say = (text) => notify && sendNote(text);
   const url = linkUrl || tab.url || "";
   if (!/^https?:\/\//i.test(url)) {
     await badge("!", tab.id, 4000, "#d14343");
-    return sendNote("Эту страницу не отправить: в бота уходят только веб-адреса (http и https).");
+    const text = "Эту страницу не отправить: в бота уходят только веб-адреса (http и https).";
+    say(text);
+    return { ok: false, text };
   }
   await badge("…", tab.id, 0);
   let ok = false;
+  let text = "";
+  let title = tab.title || url;
   try {
     // страница — с её названием и описанием; ссылка — только адрес (название бот найдёт сам)
     const g = linkUrl ? {} : await grab(tab);
@@ -112,6 +118,7 @@ async function sendToBot(tab, linkUrl) {
     const item = makeItem(src, g, now, now);
     await addItems([item]); // уже есть в списке — останется прежняя запись
     const it = (await load()).items.find((x) => x.nkey === item.nkey) || item;
+    title = it.title || title;
     // по очереди с отправкой из сборщика — тот же замок
     const res = await navigator.locks.request("tc-send", () =>
       sendLinks([it], "each", {
@@ -124,12 +131,14 @@ async function sendToBot(tab, linkUrl) {
     );
     const r = res.results.get(it.id);
     ok = !!r && (r.status === "saved" || r.status === "exists");
-    if (!ok) sendNote(`Не отправлено: ${res.error || (r && r.error) || "бот не принял ссылку."}`);
+    if (ok) text = r.status === "exists" ? "уже была в архиве бота" : r.category ? `в папке «${r.category}»` : "";
+    else text = res.error || (r && r.error) || "бот не принял ссылку.";
   } catch (e) {
-    sendNote("Не отправлено — попробуйте ещё раз.");
+    text = "не получилось — попробуйте ещё раз.";
   }
+  if (!ok) say(`Не отправлено: ${text}`);
   await badge(ok ? "✓" : "!", tab.id, 4000, ok ? "#2e9d5b" : "#d14343");
-  return ok;
+  return { ok, text, title };
 }
 
 chrome.commands.onCommand.addListener((cmd, tab) => {
@@ -201,8 +210,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     // то же, что пункт меню «Отправить эту вкладку в Telegram»
     chrome.tabs
       .get(msg.tabId)
-      .then((t) => sendToBot(t))
-      .then((ok) => reply({ ok: !!ok }), () => reply({ ok: false }));
+      .then((t) => sendToBot(t, undefined, { notify: false }))
+      .then(reply, () => reply({ ok: false, text: "этой вкладки уже нет." }));
     return true;
   }
   if (msg && msg.type === "backup-now") {

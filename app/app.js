@@ -1442,6 +1442,19 @@ async function init() {
       }
     }
   });
+  // текущую вкладку — сразу в Telegram (в панели — активная вкладка окна, во вкладке — «текущая», с которой открыли)
+  $("send-now").addEventListener("click", async () => {
+    const b = $("send-now");
+    if (b.getAttribute("aria-busy") === "true") return;
+    const tabId = PANEL ? ((await chrome.tabs.query({ active: true, windowId: st.myWindowId }).catch(() => []))[0] || {}).id : st.fromTab;
+    if (tabId == null) return toast("Нет текущей вкладки: откройте сборщик с той страницы, которую хотите отправить");
+    b.setAttribute("aria-busy", "true");
+    toast("Отправляю текущую вкладку в Telegram…");
+    const r = (await chrome.runtime.sendMessage({ type: "send-tab", tabId }).catch(() => null)) || { ok: false, text: "не получилось — попробуйте ещё раз." };
+    b.removeAttribute("aria-busy");
+    const name = r.title ? `«${r.title.length > 60 ? `${r.title.slice(0, 59)}…` : r.title}»` : "Вкладка";
+    toast(r.ok ? `${name} — в Telegram${r.text ? `, ${r.text}` : ""}` : `Не отправлено: ${r.text}`);
+  });
   // панель ↔ вкладка
   $("to-tab").addEventListener("click", async () => {
     const r = await chrome.runtime.sendMessage({ type: "open-app", view: st.view, windowId: st.myWindowId }).catch(() => null);
