@@ -162,5 +162,47 @@ await t("копия сохраняет тип страницы и место п�
   assert.ok(!(await load()).folders.some((f) => f.id === "f-1")); // пустое имя папки не берём
 });
 
+await t("часть списка без ответа бота повторяется слово в слово", async () => {
+  const sess = {};
+  chrome.storage.session = {
+    async get(k) {
+      return k in sess ? { [k]: structuredClone(sess[k]) } : {};
+    },
+    async set(o) {
+      Object.assign(sess, structuredClone(o));
+    },
+    async remove(k) {
+      delete sess[k];
+    },
+  };
+  mem.settings = { ...(mem.settings || {}), token: "t", baseUrl: "http://127.0.0.1:9" };
+  const bodies = [];
+  let status = 500;
+  globalThis.fetch = async (_u, init) => {
+    bodies.push(JSON.parse(init.body));
+    return { status, json: async () => (status === 200 ? { ok: true, status: "saved" } : {}) };
+  };
+  const { sendLinks } = await import("../core/bot.js");
+  const items = [0, 1, 2].map((i) => ({ ...makeItem({ url: `https://ex.ru/p${i}`, title: `P${i}` }, {}, 1), id: `u${i}` }));
+  const r1 = await sendLinks(items, "list", { title: "Подборка" });
+  assert.ok(r1.error);
+  // описания уточнились, заголовок не вписали заново — запрос тот же, ключ тот же
+  const later = items.map((it) => ({ ...it, description: "Длинное описание ".repeat(10) }));
+  status = 200;
+  const r2 = await sendLinks(later, "list", { title: "" });
+  assert.equal(r2.saved, 3);
+  assert.deepEqual(bodies[1], bodies[0]);
+  // подтверждено — дальше обычный запрос
+  await sendLinks(later.map((it) => ({ ...it, sentAt: 7 })), "list", { title: "" });
+  assert.notEqual(bodies[2].batchKey, bodies[0].batchKey); // уже отправлены — новый пост
+  assert.ok(bodies[2].items[0].description);
+  // бот отклонил запрос (4xx) — поста точно нет, слово в слово не повторяем
+  status = 400;
+  await sendLinks(items, "list", { title: "X" });
+  status = 200;
+  await sendLinks(later, "list", { title: "X" });
+  assert.ok(bodies[4].items[0].description);
+});
+
 console.log(`${ok} OK, ${fail} FAIL (хранилище)`);
 process.exit(fail ? 1 : 0);

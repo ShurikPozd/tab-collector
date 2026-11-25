@@ -526,6 +526,7 @@ t("описания без разметки, даже заэкранирован
 t("hh.ru без schema.org: заголовок со страницы", () => {
   const html = '<meta property="og:title" content="Вакансия Специалист в IT-отдел, работа в компании Х"><h1 data-qa="vacancy-title" class="x"><span>Специалист в IT-отдел</span></h1>';
   assert.equal(hhPagePatch(html).title, "Специалист в IT-отдел");
+  assert.match(hhPagePatch(html).meta, /^Х/); // компания — из og:title, хоть название и из h1
 });
 t("hh.ru без schema.org: должность не обрезается", () => {
   const page = (x) => `<meta property="og:title" content="${x}">`;

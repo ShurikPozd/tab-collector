@@ -196,7 +196,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           continue;
         }
         try {
-          const active = msg.items.length === 1;
+          const active = msg.items.length === 1 && !msg.restore; // «Вернуть» — фоном, как вкладка и была
           // своё окно и место («Вернуть» после «Закрыть дубли»); окна уже нет — как обычно, рядом
           let t = Number.isInteger(it.windowId)
             ? await chrome.tabs.create({ url: it.url, active, windowId: it.windowId, index: Number.isInteger(it.index) && it.index >= 0 ? it.index : undefined }).catch(() => null)

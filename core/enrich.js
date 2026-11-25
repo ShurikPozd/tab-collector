@@ -385,14 +385,18 @@ export function hhPagePatch(html) {
     const h1 = String(html).match(/<h1[^>]*data-qa="vacancy-title"[^>]*>([\s\S]*?)<\/h1>/);
     if (h1) title = htmlText(h1[1]);
   }
-  if (!title) {
+  if (!title || !company) {
     // «Вакансия Python разработчик в Москве, работа в компании Х». Город — с заглавной и последним
     // перед запятой, иначе «Менеджер в отдел продаж в Москве» обрезалось бы до «Менеджер».
+    // Название из h1 точнее, но компанию берём отсюда
     const m = String(tags["og:title"] || "").match(
       /^Вакансия\s+(.+?)(?:\s+в\s+[А-ЯЁA-Z][^,\s]*(?:[\s-]+[А-ЯЁA-Z][^,\s]*)*)?,\s+работа в компании\s+(.+)$/
     );
-    if (!m) return null;
-    [, title, company] = m;
+    if (m) {
+      title = title || m[1];
+      company = company || m[2];
+    }
+    if (!title) return null;
   }
   return {
     title,

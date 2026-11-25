@@ -15,8 +15,8 @@
         <span class="brand-name">Сборщик вкладок</span>
       </div>
       <nav class="views" role="tablist" aria-label="Разделы">
-        <button type="button" role="tab" data-view="open" aria-selected="true"><span data-icon="tabs"></span><span class="v-label">Открытые</span><span id="open-count" class="badge"></span></button>
-        <button type="button" role="tab" data-view="library" aria-selected="false"><span data-icon="list"></span><span class="v-label">Собранные</span><span id="lib-count" class="badge"></span></button>
+        <button type="button" role="tab" id="tab-open" aria-controls="view-open" data-view="open" aria-selected="true"><span data-icon="tabs"></span><span class="v-label">Открытые</span><span id="open-count" class="badge"></span></button>
+        <button type="button" role="tab" id="tab-library" aria-controls="view-library" data-view="library" aria-selected="false"><span data-icon="list"></span><span class="v-label">Собранные</span><span id="lib-count" class="badge"></span></button>
       </nav>
       <label class="search">
         <span class="search-icon" data-icon="search" data-size="20"></span>
@@ -32,7 +32,7 @@
     </header>
 
     <!-- ===================== Открытые вкладки ===================== -->
-    <main id="view-open" class="view">
+    <main id="view-open" class="view" role="tabpanel" aria-labelledby="tab-open">
       <div class="bar">
         <div class="seg" role="radiogroup" aria-label="Какие окна">
           <button type="button" data-scope="all" aria-checked="true" role="radio">Все окна</button>
@@ -51,7 +51,7 @@
         </div>
       </div>
       <p class="note">Закреплённые вкладки, служебные страницы Chrome и вкладка, с которой вы открыли сборщик, не трогаются.</p>
-      <div id="open-list" class="groups"></div>
+      <div id="open-list" class="groups" tabindex="-1"></div>
       <div id="open-empty" class="empty" hidden>
         <span data-icon="tabs" data-size="40"></span>
         <p class="empty-title">Здесь пусто</p>
@@ -60,7 +60,7 @@
     </main>
 
     <!-- ===================== Собранные ===================== -->
-    <main id="view-library" class="view lib" hidden>
+    <main id="view-library" class="view lib" role="tabpanel" aria-labelledby="tab-library" hidden>
       <aside class="side" aria-label="Разделы списка">
         <nav id="side-nav" class="side-nav"></nav>
       </aside>
@@ -86,7 +86,7 @@
           </div>
         </div>
         <div id="enrich-line" class="enrich-line" hidden></div>
-        <div id="lib-list" class="cards"></div>
+        <div id="lib-list" class="cards" tabindex="-1"></div>
         <button id="more-btn" type="button" class="ghost more" hidden></button>
         <div id="lib-empty" class="empty" hidden>
           <span data-icon="inbox" data-size="40"></span>
@@ -232,7 +232,7 @@
       </form>
     </dialog>
 
-    <div id="toast" class="toast" role="status" hidden><span id="toast-text"></span><button id="toast-undo" type="button" hidden><span data-icon="undo" data-size="16"></span>Вернуть</button></div>
+    <div id="toast" class="toast" role="status" hidden><span id="toast-text"></span><button id="toast-undo" type="button" title="Вернуть (Ctrl+Z)" aria-keyshortcuts="Control+Z" hidden><span data-icon="undo" data-size="16"></span>Вернуть</button></div>
 
     <script type="module" src="app.js"></script>
   </body>

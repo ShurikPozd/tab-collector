@@ -1,9 +1,8 @@
 // Окно «Настройки»: тема, адрес и секрет бота, проверка связи, резервная копия списка.
 
 import { load, loadSettings, saveSettings, exportData, importData } from "../core/store.js";
-import { botSettings, ping } from "../core/bot.js";
+import { botSettings, ping, defaultBaseUrl } from "../core/bot.js";
 import { linksWord } from "../core/format.js";
-import { DEFAULTS } from "../config.js";
 import { clearShots, countShots } from "../core/shots.js";
 import { forgetShots } from "./peek.js";
 import { confirmDlg } from "./ui.js";
@@ -106,7 +105,7 @@ function bind() {
   $("set-save").addEventListener("click", async () => {
     const url = $("set-url").value.trim().replace(/\/+$/, "");
     if (url && !okUrl(url)) return hint("Адрес бота должен начинаться с https:// (http — только для localhost)", "err");
-    await saveSettings({ baseUrl: url === DEFAULTS.baseUrl ? "" : url, token: $("set-token").value.trim() });
+    await saveSettings({ baseUrl: url === (await defaultBaseUrl()) ? "" : url, token: $("set-token").value.trim() });
     hint("Сохранено.", "ok");
     onChange();
   });
@@ -121,7 +120,7 @@ function bind() {
       return hint("Адрес бота должен начинаться с https:// (http — только для localhost)", "err");
     }
     hint("Проверяю… если бот спал, он просыпается до минуты.");
-    await saveSettings({ baseUrl: url === DEFAULTS.baseUrl ? "" : url, token: $("set-token").value.trim() });
+    await saveSettings({ baseUrl: url === (await defaultBaseUrl()) ? "" : url, token: $("set-token").value.trim() });
     const r = await ping();
     b.disabled = false;
     b.classList.remove("spin");

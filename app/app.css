@@ -2493,3 +2493,9 @@ button.chev:hover {
     display: none;
   }
 }
+
+/* сюда возвращается фокус, когда его элемент исчез (подсказка «Вернуть») — без рамки */
+#open-list:focus,
+#lib-list:focus {
+  outline: none;
+}

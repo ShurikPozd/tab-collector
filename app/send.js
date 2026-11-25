@@ -161,7 +161,7 @@ async function go() {
       const cat = new Map(ok.map(([id, r]) => [id, r.category || ""]));
       if (ok.length) await patchItems([...cat.keys()], (it) => ({ sentAt: now, sentCategory: cat.get(it.id) }));
       items = items.filter((it) => !cat.has(it.id)); // «Отправить» ещё раз — только оставшиеся
-      onDone();
+      onDone([...cat.keys()]);
     },
   });
   });

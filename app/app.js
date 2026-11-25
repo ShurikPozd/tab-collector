@@ -219,9 +219,16 @@ function keepFocus(root, paint) {
                 ? ".nav-marks-btn"
                 : ".nav-sites-btn");
   const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
+  // место карточки среди соседних: если её уберут из списка, фокус перейдёт на ту, что встала на её место
+  const kind = host && (host.dataset.id ? "[data-id]" : host.dataset.tab ? "[data-tab]" : "");
+  const pos = kind ? [...root.querySelectorAll(kind)].indexOf(host) : -1;
   paint();
   if (!key) return;
-  const again = root.querySelector(key);
+  let again = root.querySelector(key);
+  if (!again && pos >= 0) {
+    const rest = root.querySelectorAll(kind);
+    again = rest[Math.min(pos, rest.length - 1)] || null;
+  }
   const target = again && (role ? again.querySelector(role) || again : again);
   if (target && target.focus) target.focus({ preventScroll: true });
 }
@@ -287,7 +294,8 @@ export function toast(text, undo) {
   btn.hidden = !undo;
   btn.onclick = undo
     ? async () => {
-        el.hidden = true;
+        btn.onclick = null; // второй раз не возвращаем
+        hideToast();
         await undo();
       }
     : null;
@@ -300,18 +308,42 @@ export function toast(text, undo) {
     const resume = () => {
       if (el.matches(":hover") || el.contains(document.activeElement)) return;
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => (el.hidden = true), toastMs);
+      toastTimer = setTimeout(hideToast, toastMs);
     };
-    el.addEventListener("focusin", hold);
+    el.addEventListener("focusin", (e) => {
+      hold();
+      if (e.relatedTarget && !el.contains(e.relatedTarget)) toastFrom = e.relatedTarget; // куда вернуть фокус
+    });
+    // Ctrl+Z — «Вернуть» без долгого пути Tab'ом через весь список (в полях ввода — их собственная отмена)
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.code !== "KeyZ") return;
+      if (el.hidden || btn.hidden || !btn.onclick || document.querySelector("dialog[open]")) return;
+      if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable) return;
+      e.preventDefault();
+      btn.onclick();
+    });
     el.addEventListener("mouseenter", hold);
     el.addEventListener("focusout", () => setTimeout(resume));
     el.addEventListener("mouseleave", resume);
   }
   clearTimeout(toastTimer);
-  if (!el.contains(document.activeElement) && !el.matches(":hover")) toastTimer = setTimeout(() => (el.hidden = true), toastMs);
+  if (!el.contains(document.activeElement) && !el.matches(":hover")) toastTimer = setTimeout(hideToast, toastMs);
 }
 let toastMs = 4000;
 let toastBound = false;
+let toastFrom = null;
+function hideToast() {
+  const el = $("toast");
+  clearTimeout(toastTimer);
+  // фокус был на «Вернуть» — не роняем его в начало страницы, а возвращаем туда, откуда пришли
+  const had = el.contains(document.activeElement);
+  el.hidden = true;
+  if (had) {
+    const back = toastFrom && toastFrom.isConnected && !toastFrom.closest("[hidden]") ? toastFrom : $(st.view === "library" ? "lib-list" : "open-list");
+    back.focus({ preventScroll: true });
+  }
+  toastFrom = null;
+}
 
 function progress(frac) {
   const p = $("progress");
@@ -330,10 +362,11 @@ async function reloadItems() {
   st.items = d.items;
   st.folders = d.folders;
   st.settings = d.settings;
-  const ids = new Set(st.items.map((it) => it.id));
-  for (const id of st.libSel) if (!ids.has(id)) st.libSel.delete(id);
   if (st.filter.type === "folder" && !st.folders.some((f) => f.id === st.filter.id)) st.filter = { type: "all" };
   if (st.filter.type === "mark" && !st.items.some((it) => it.mark === st.filter.mark)) st.filter = { type: "all" };
+  // действия — только над тем, что есть в разделе: ушедшие из него (удалены, отправлены, сменилась отметка) снимаем
+  const byId = new Map(st.items.map((it) => [it.id, it]));
+  for (const id of st.libSel) if (!byId.has(id) || !inFilter(byId.get(id))) st.libSel.delete(id);
 }
 
 async function reloadTabs() {
@@ -581,7 +614,7 @@ function bindOpen() {
     const closed = res.items; // вкладки с черновиками не закрывались — их и не открываем
     toast(`Собрано: ${nTabs(tabs.length)}${extra ? ` (${extra})` : ""}`, async () => {
       // «Вернуть»: открыть закрытые вкладки обратно (усыплёнными, на месте прокрутки) и убрать добавленные записи
-      const back = await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, windowId: st.myWindowId }).catch(() => null);
+      const back = await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, restore: true, windowId: st.myWindowId }).catch(() => null);
       // убираем из списка только то, что действительно снова открылось (файл с диска может не открыться)
       const reopened = new Set((back && back.opened) || []);
       const added = new Set(res.ids);
@@ -650,12 +683,12 @@ function bindOpen() {
       renderOpen();
     }
     const kept = [skipped && `${skipped} с недописанным текстом`, unknown && `${unknown} не удалось проверить`].filter(Boolean).join(", ");
-    toast(`Закрыто дублей: ${closed.length}${kept ? ` (оставлены: ${kept})` : ""}`, async () => {
+    toast(`Закрыто дублей: ${closed.length}${kept ? ` (оставлены: ${kept})` : ""}`, closed.length ? async () => {
       // force: такая страница открыта (оставленная копия), но вернуть нужно именно закрытые копии
       // в прежние окна и на прежние места (по порядку, чтобы номера мест не сбивались)
       const back = closed.slice().sort((a, b) => a.windowId - b.windowId || a.index - b.index);
-      await chrome.runtime.sendMessage({ type: "open", items: back.map((t) => ({ url: t.url, windowId: t.windowId, index: t.index })), lazy: true, force: true, windowId: st.myWindowId }).catch(() => {});
-    });
+      await chrome.runtime.sendMessage({ type: "open", items: back.map((t) => ({ url: t.url, windowId: t.windowId, index: t.index })), lazy: true, force: true, restore: true, windowId: st.myWindowId }).catch(() => {});
+    } : undefined);
   });
 
   $("sleep-btn").addEventListener("click", async () => {
@@ -1220,7 +1253,8 @@ function bindLib() {
     if (!e.target.closest("#folder-menu")) closeMenu();
   });
   $("send-btn").addEventListener("click", () =>
-    openSend(selectedItems(), async () => {
+    openSend(selectedItems(), async (sentIds) => {
+      for (const id of sentIds || []) st.libSel.delete(id); // повторная «В Telegram» — только недошедшие
       await reloadItems();
       renderLib();
     })
