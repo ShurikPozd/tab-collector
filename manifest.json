@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Сборщик вкладок",
-  "version": "0.5.9",
+  "version": "0.6.0",
   "description": "Собирает сотни открытых вкладок в один список, усыпляет лишние и отправляет выбранные ссылки с описанием в Telegram-бота.",
   "permissions": [
     "tabs",
@@ -11,7 +11,8 @@
     "contextMenus",
     "favicon",
     "sidePanel",
-    "alarms"
+    "alarms",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -41,6 +42,12 @@
         "default": "Alt+Shift+S"
       },
       "description": "Открыть сборщик вкладок (боковую панель или вкладку — как в настройках)"
+    },
+    "send-tab": {
+      "suggested_key": {
+        "default": "Alt+Shift+G"
+      },
+      "description": "Отправить текущую вкладку в Telegram"
     }
   },
   "side_panel": {

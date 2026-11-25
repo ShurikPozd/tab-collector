@@ -35,7 +35,7 @@ function readPage() {
   };
 }
 
-async function grab(tab, timeout = 1500) {
+export async function grab(tab, timeout = 1500) {
   // выгруженная или ещё не загруженная вкладка скрипт не выполнит — хватит адреса и заголовка
   if (tab.discarded || tab.status === "unloaded" || !/^https?:/.test(tab.url)) return {};
   try {

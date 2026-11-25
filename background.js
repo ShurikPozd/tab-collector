@@ -1,10 +1,11 @@
 // Фон: значок открывает страницу сборщика (одну на все окна), меню значка —
 // быстрые действия без страницы, восстановление прокрутки у открытых из списка ссылок.
 
-import { collectTabs, sleepTabs, untouchable } from "./core/collect.js";
+import { collectTabs, sleepTabs, untouchable, grab } from "./core/collect.js";
 import { siteOf, normalizeUrl, collectable } from "./core/url.js";
 import { putShot, shrink, pruneShots } from "./core/shots.js";
-import { migrateKeys, loadSettings } from "./core/store.js";
+import { migrateKeys, loadSettings, makeItem, addItems, load, patchItems } from "./core/store.js";
+import { sendLinks } from "./core/bot.js";
 import { sendBackup, backupDue } from "./core/backup.js";
 
 const APP = chrome.runtime.getURL("app/app.html");
@@ -59,10 +60,15 @@ iconBehavior();
 
 function menus() {
   chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: "send-tab", title: "Отправить эту вкладку в Telegram", contexts: ["action"] });
     chrome.contextMenus.create({ id: "site", title: "Собрать вкладки этого сайта и закрыть", contexts: ["action"] });
     chrome.contextMenus.create({ id: "sleep", title: "Усыпить все вкладки окна, кроме текущей", contexts: ["action"] });
     chrome.contextMenus.create({ id: "library", title: "Открыть собранные ссылки во вкладке", contexts: ["action"] });
     chrome.contextMenus.create({ id: "panel", title: "Открыть в боковой панели", contexts: ["action"] });
+    // правый щелчок по самой странице или по ссылке на ней
+    const web = ["http://*/*", "https://*/*"];
+    chrome.contextMenus.create({ id: "send-page", title: "Отправить страницу в Telegram", contexts: ["page"], documentUrlPatterns: web });
+    chrome.contextMenus.create({ id: "send-link", title: "Отправить ссылку в Telegram", contexts: ["link"], targetUrlPatterns: web });
   });
 }
 chrome.runtime.onInstalled.addListener(menus);
@@ -73,13 +79,66 @@ chrome.runtime.onStartup.addListener(() => pruneShots().catch(() => {}));
 chrome.runtime.onInstalled.addListener(() => migrateKeys().catch(() => {}));
 chrome.runtime.onStartup.addListener(() => migrateKeys().catch(() => {}));
 
-async function badge(text, tabId) {
-  await chrome.action.setBadgeBackgroundColor({ color: "#6d5efc" });
-  await chrome.action.setBadgeText({ text, tabId });
-  setTimeout(() => chrome.action.setBadgeText({ text: "", tabId }).catch(() => {}), 4000);
+async function badge(text, tabId, ms = 4000, color = "#6d5efc") {
+  await chrome.action.setBadgeBackgroundColor({ color, tabId }).catch(() => {});
+  await chrome.action.setBadgeText({ text, tabId }).catch(() => {});
+  if (ms) setTimeout(() => chrome.action.setBadgeText({ text: "", tabId }).catch(() => {}), ms);
 }
 
+// ---------- Отправить вкладку (страницу, ссылку) в Telegram сразу, без страницы сборщика ----------
+// Ссылка попадает и в «Собранные» — с отметкой «В Telegram»: видно, что и когда ушло.
+// Ход — на значке: «…» пока идёт, «✓» — в чате бота, «!» — не получилось (с объяснением в уведомлении).
+function sendNote(text) {
+  chrome.notifications
+    .create({ type: "basic", iconUrl: "icons/icon128.png", title: "Сборщик вкладок", message: text, priority: 0 })
+    .catch(() => {});
+}
+
+async function sendToBot(tab, linkUrl) {
+  if (!tab || tab.id == null) [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab) return;
+  const url = linkUrl || tab.url || "";
+  if (!/^https?:\/\//i.test(url)) {
+    await badge("!", tab.id, 4000, "#d14343");
+    return sendNote("Эту страницу не отправить: в бота уходят только веб-адреса (http и https).");
+  }
+  await badge("…", tab.id, 0);
+  let ok = false;
+  try {
+    // страница — с её названием и описанием; ссылка — только адрес (название бот найдёт сам)
+    const g = linkUrl ? {} : await grab(tab);
+    const src = linkUrl ? { url: linkUrl, title: linkUrl } : { ...tab, url: g.url && /^https?:/.test(g.url) ? g.url : tab.url };
+    const now = Date.now();
+    const item = makeItem(src, g, now, now);
+    await addItems([item]); // уже есть в списке — останется прежняя запись
+    const it = (await load()).items.find((x) => x.nkey === item.nkey) || item;
+    // по очереди с отправкой из сборщика — тот же замок
+    const res = await navigator.locks.request("tc-send", () =>
+      sendLinks([it], "each", {
+        onBatch: async (batch) => {
+          const done = [...batch].filter(([, r]) => r.status === "saved" || r.status === "exists");
+          const cat = new Map(done.map(([id, r]) => [id, r.category || ""]));
+          if (done.length) await patchItems([...cat.keys()], (x) => ({ sentAt: Date.now(), sentCategory: cat.get(x.id) }));
+        },
+      })
+    );
+    const r = res.results.get(it.id);
+    ok = !!r && (r.status === "saved" || r.status === "exists");
+    if (!ok) sendNote(`Не отправлено: ${res.error || (r && r.error) || "бот не принял ссылку."}`);
+  } catch (e) {
+    sendNote("Не отправлено — попробуйте ещё раз.");
+  }
+  await badge(ok ? "✓" : "!", tab.id, 4000, ok ? "#2e9d5b" : "#d14343");
+  return ok;
+}
+
+chrome.commands.onCommand.addListener((cmd, tab) => {
+  if (cmd === "send-tab") sendToBot(tab);
+});
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === "send-tab" || info.menuItemId === "send-page") return sendToBot(tab);
+  if (info.menuItemId === "send-link") return sendToBot(tab, info.linkUrl);
   if (info.menuItemId === "library") return openApp("library", tab);
   if (info.menuItemId === "panel") return chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
   const all = await chrome.tabs.query({ windowId: tab.windowId, windowType: "normal" });
@@ -138,6 +197,14 @@ function discardWhenReady(tabId) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg && msg.type === "send-tab") {
+    // то же, что пункт меню «Отправить эту вкладку в Telegram»
+    chrome.tabs
+      .get(msg.tabId)
+      .then((t) => sendToBot(t))
+      .then((ok) => reply({ ok: !!ok }), () => reply({ ok: false }));
+    return true;
+  }
   if (msg && msg.type === "backup-now") {
     sendBackup({ manual: true }).then(reply, () => reply({ ok: false, text: "Копия не отправлена." }));
     return true;
