@@ -292,9 +292,26 @@ export function toast(text, undo) {
       }
     : null;
   el.hidden = false;
+  toastMs = undo ? 8000 : 4000;
+  if (!toastBound) {
+    toastBound = true;
+    // пока подсказка в фокусе (Tab до «Вернуть») или под мышью — не прячем; ушли — отсчёт заново
+    const hold = () => clearTimeout(toastTimer);
+    const resume = () => {
+      if (el.matches(":hover") || el.contains(document.activeElement)) return;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => (el.hidden = true), toastMs);
+    };
+    el.addEventListener("focusin", hold);
+    el.addEventListener("mouseenter", hold);
+    el.addEventListener("focusout", () => setTimeout(resume));
+    el.addEventListener("mouseleave", resume);
+  }
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), undo ? 8000 : 4000);
+  if (!el.contains(document.activeElement) && !el.matches(":hover")) toastTimer = setTimeout(() => (el.hidden = true), toastMs);
 }
+let toastMs = 4000;
+let toastBound = false;
 
 function progress(frac) {
   const p = $("progress");
@@ -635,7 +652,9 @@ function bindOpen() {
     const kept = [skipped && `${skipped} с недописанным текстом`, unknown && `${unknown} не удалось проверить`].filter(Boolean).join(", ");
     toast(`Закрыто дублей: ${closed.length}${kept ? ` (оставлены: ${kept})` : ""}`, async () => {
       // force: такая страница открыта (оставленная копия), но вернуть нужно именно закрытые копии
-      await chrome.runtime.sendMessage({ type: "open", items: closed.map((t) => ({ url: t.url })), lazy: true, force: true, windowId: st.myWindowId }).catch(() => {});
+      // в прежние окна и на прежние места (по порядку, чтобы номера мест не сбивались)
+      const back = closed.slice().sort((a, b) => a.windowId - b.windowId || a.index - b.index);
+      await chrome.runtime.sendMessage({ type: "open", items: back.map((t) => ({ url: t.url, windowId: t.windowId, index: t.index })), lazy: true, force: true, windowId: st.myWindowId }).catch(() => {});
     });
   });
 
@@ -1228,7 +1247,9 @@ function placeholder() {
 function render() {
   for (const v of ["open", "library"]) {
     $(`view-${v}`).hidden = st.view !== v;
-    document.querySelector(`[data-view="${v}"]`).setAttribute("aria-selected", String(st.view === v));
+    const tab = document.querySelector(`[data-view="${v}"]`);
+    tab.setAttribute("aria-selected", String(st.view === v));
+    tab.tabIndex = st.view === v ? 0 : -1;
   }
   placeholder();
   renderOpen();
@@ -1303,13 +1324,24 @@ async function init() {
   await reloadTabs();
   await refreshShots();
 
-  document.querySelectorAll("[data-view]").forEach((b) =>
-    b.addEventListener("click", () => {
-      st.view = b.dataset.view;
-      history.replaceState(null, "", st.view === "library" ? "#library" : "#");
-      render();
-    })
-  );
+  const showView = (v) => {
+    st.view = v;
+    history.replaceState(null, "", st.view === "library" ? "#library" : "#");
+    render();
+  };
+  document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+  // как у обычных вкладок: ← → (и Home/End) переключают раздел и переносят на него фокус
+  document.querySelector('[role="tablist"]').addEventListener("keydown", (e) => {
+    const tabs = [...document.querySelectorAll("[data-view]")];
+    const i = tabs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    const next = tabs[(to + tabs.length) % tabs.length];
+    showView(next.dataset.view);
+    next.focus();
+  });
   window.addEventListener("hashchange", () => {
     st.view = location.hash === "#library" ? "library" : "open";
     render();

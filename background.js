@@ -196,12 +196,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
           continue;
         }
         try {
-          const t = await chrome.tabs.create({
-            url: it.url,
-            active: msg.items.length === 1,
-            windowId: base && base.windowId,
-            index: index === undefined ? undefined : index++,
-          });
+          const active = msg.items.length === 1;
+          // своё окно и место («Вернуть» после «Закрыть дубли»); окна уже нет — как обычно, рядом
+          let t = Number.isInteger(it.windowId)
+            ? await chrome.tabs.create({ url: it.url, active, windowId: it.windowId, index: Number.isInteger(it.index) && it.index >= 0 ? it.index : undefined }).catch(() => null)
+            : null;
+          if (!t) t = await chrome.tabs.create({ url: it.url, active, windowId: base && base.windowId, index: index === undefined ? undefined : index++ });
           // все, кроме первой, — усыплёнными: загрузятся, когда вы на них перейдёте
           const lazy = msg.lazy && msg.items.length > 1 && n >= 1;
           if (lazy) await chrome.storage.session.set({ [LAZY(t.id)]: true });
