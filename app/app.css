@@ -2275,20 +2275,30 @@ button.chev:hover {
 }
 
 /* «Перейти к вкладке»: в списке — справа в строке, в плитках — в углу картинки */
-.row .r-go {
-  width: 2.4rem;
-  height: 2.4rem;
+/* «Перейти» и «Закрыть» на строке вкладки — видны при наведении (на узком экране и сенсорном — всегда) */
+.row .r-acts {
+  display: flex;
+  gap: 6px;
   opacity: 0;
   transition: opacity var(--t-fast) ease;
 }
 
-.row:hover .r-go,
-.row:focus-within .r-go {
+.row .r-acts .icon-btn {
+  width: 2.4rem;
+  height: 2.4rem;
+}
+
+.row:hover .r-acts,
+.row:focus-within .r-acts {
   opacity: 1;
 }
 
+.row .r-close:hover {
+  color: var(--danger, #d14343);
+}
+
 @media (hover: none), (max-width: 900px) {
-  .row .r-go {
+  .row .r-acts {
     opacity: 1;
   }
 }
@@ -2297,11 +2307,27 @@ button.chev:hover {
   grid-template-columns: auto auto minmax(0, 1fr) auto auto;
 }
 
-.tiles .group.open .row > .r-go {
+.tiles .group.open .row > .r-acts {
   position: absolute;
   top: 10px;
   right: 10px;
+}
+
+.tiles .group.open .row > .r-acts .icon-btn {
   background: color-mix(in srgb, var(--bg) 82%, transparent);
+}
+
+/* строка, для которой открыто меню (правый щелчок), — подсвечена, пока меню открыто */
+.row.menu-on,
+.group .g-head.menu-on {
+  background: var(--bg-3);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.menu .m-danger:hover,
+.menu .m-danger:focus-visible {
+  color: var(--danger, #d14343);
 }
 
 .c-open {

@@ -65,10 +65,22 @@ function menus() {
     chrome.contextMenus.create({ id: "sleep", title: "Усыпить все вкладки окна, кроме текущей", contexts: ["action"] });
     chrome.contextMenus.create({ id: "library", title: "Открыть собранные ссылки во вкладке", contexts: ["action"] });
     chrome.contextMenus.create({ id: "panel", title: "Открыть в боковой панели", contexts: ["action"] });
-    // правый щелчок по самой странице или по ссылке на ней
+    // правый щелчок по самой странице или по ссылке на ней. Несколько пунктов Chrome сам собирает
+    // в подменю «Сборщик вкладок». В меню вкладок самого Chrome (по названию вкладки) расширения встраиваться не могут.
     const web = ["http://*/*", "https://*/*"];
-    chrome.contextMenus.create({ id: "send-page", title: "Отправить страницу в Telegram", contexts: ["page"], documentUrlPatterns: web });
+    const page = (id, title) => chrome.contextMenus.create({ id, title, contexts: ["page"], documentUrlPatterns: web });
+    const line = (id) => chrome.contextMenus.create({ id, type: "separator", contexts: ["page"], documentUrlPatterns: web });
+    page("send-page", "Отправить страницу в Telegram");
+    page("keep-page", "Сохранить в «Собранные» (вкладка останется)");
+    page("collect-page", "Собрать эту вкладку и закрыть");
+    line("sep-1");
+    page("site-page", "Собрать вкладки этого сайта и закрыть");
+    page("sleep-page", "Усыпить остальные вкладки окна");
+    line("sep-2");
+    page("panel-page", "Открыть сборщик в боковой панели");
+    page("library-page", "Открыть собранные ссылки во вкладке");
     chrome.contextMenus.create({ id: "send-link", title: "Отправить ссылку в Telegram", contexts: ["link"], targetUrlPatterns: web });
+    chrome.contextMenus.create({ id: "keep-link", title: "Сохранить ссылку в «Собранные»", contexts: ["link"], targetUrlPatterns: web });
   });
 }
 chrome.runtime.onInstalled.addListener(menus);
@@ -194,17 +206,54 @@ chrome.commands.onCommand.addListener((cmd, tab) => {
   if (cmd === "send-tab") sendToBot(tab);
 });
 
+// Сохранить страницу (вкладка остаётся) или ссылку в «Собранные», без отправки. Итог — на значке и уведомлением.
+async function keepToList(tab, linkUrl) {
+  try {
+    let res;
+    if (linkUrl) {
+      const now = Date.now();
+      res = await addItems([makeItem({ url: linkUrl, title: linkUrl }, {}, now, now)]);
+    } else res = await navigator.locks.request("tc-collect", () => collectTabs([tab], { close: false }));
+    const fresh = res.added > 0;
+    await badge(fresh ? "+" : "✓", tab.id, 3000, "#2e9d5b");
+    sendNote(fresh ? `Сохранено в «Собранные»: ${linkUrl ? "ссылка" : `«${(tab.title || tab.url).slice(0, 80)}»`}` : "Уже есть в «Собранных».");
+  } catch (e) {
+    await badge("!", tab.id, 4000, "#d14343");
+    sendNote("Не получилось сохранить — попробуйте ещё раз.");
+  }
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === "send-tab" || info.menuItemId === "send-page") return sendToBot(tab);
-  if (info.menuItemId === "send-link") return sendToBot(tab, info.linkUrl);
-  if (info.menuItemId === "library") return openApp("library", tab);
-  if (info.menuItemId === "panel") return chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  // пункты меню страницы — те же действия, что в меню значка
+  const id = { "site-page": "site", "sleep-page": "sleep", "panel-page": "panel", "library-page": "library" }[info.menuItemId] || info.menuItemId;
+  if (id === "send-tab" || id === "send-page") return sendToBot(tab);
+  if (id === "send-link") return sendToBot(tab, info.linkUrl);
+  if (id === "keep-link") return keepToList(tab, info.linkUrl);
+  if (id === "keep-page") return keepToList(tab);
+  if (id === "library") return openApp("library", tab);
+  if (id === "panel") return chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {});
+  if (id === "collect-page") {
+    if (untouchable(tab, EXT)) {
+      sendNote(tab.pinned ? "Закреплённые вкладки не собираются — открепите её или сохраните без закрытия." : "Эту страницу не собрать.");
+      return badge("!", tab.id, 4000, "#d14343");
+    }
+    const res = await navigator.locks.request("tc-collect", () => collectTabs([tab])).catch(() => null);
+    // вкладка с недописанным текстом сохраняется, но остаётся открытой — говорим почему
+    if (res && !res.items.length)
+      sendNote(
+        `Сохранено в «Собранные», но вкладка оставлена открытой: ${
+          res.unchecked ? "не успели проверить, нет ли в ней недописанного текста." : res.moved ? "пока собирали, она сменила страницу." : "в ней недописанный текст."
+        }`
+      );
+    else if (!res) sendNote("Не получилось собрать вкладку — она осталась открытой.");
+    return;
+  }
   const all = await chrome.tabs.query({ windowId: tab.windowId, windowType: "normal" });
-  if (info.menuItemId === "sleep") {
+  if (id === "sleep") {
     const res = await sleepTabs(all.filter((t) => t.id !== tab.id && !untouchable(t, EXT)));
     return badge(String(res.n), tab.id);
   }
-  if (info.menuItemId === "site") {
+  if (id === "site") {
     const site = siteOf(tab.url);
     const fileOk = await chrome.extension.isAllowedFileSchemeAccess().catch(() => false);
     const pick = all.filter((t) => t.id !== tab.id && !untouchable(t, EXT) && siteOf(t.url) === site && (fileOk || !/^file:/i.test(t.url)));

@@ -125,7 +125,7 @@ export async function collectTabs(tabs, { close = true, onProgress } = {}) {
   return res;
 }
 
-// выполняется ВНУТРИ вкладки: есть ли недописанный текст (поле изменено, но не отправлено)
+// выполняется ВНУТРИ вкладки: есть ли недописанный текст (поле изменено, но не отправлено) и где прокрутка
 function hasDraft() {
   // видно ли поле (в том числе в окне поверх страницы с position: fixed)
   const visible = (el) => el.getClientRects().length > 0;
@@ -138,24 +138,87 @@ function hasDraft() {
     for (const el of root.querySelectorAll("*")) if (el.shadowRoot && scan(el.shadowRoot)) return true;
     return false;
   };
-  if (scan(document)) return true;
   // редактор поста/письма (contenteditable), в котором вы сейчас пишете
   const ed = document.activeElement;
-  return !!(ed && ed.isContentEditable && ed.textContent.trim());
+  const draft = scan(document) || !!(ed && ed.isContentEditable && ed.textContent.trim());
+  return { draft, y: window.scrollY };
 }
 
-/** "yes" | "no" | "unknown": не успели проверить — не усыпляем (лучше оставить, чем потерять текст). */
-export async function draftIn(tab) {
-  if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return "no";
+/** { draft: "yes" | "no" | "unknown", y } — y: прокрутка страницы (для «Вернуть» после «Закрыть»). */
+export async function pageCheck(tab) {
+  if (tab.status === "unloaded" || !/^https?:/.test(tab.url)) return { draft: "no", y: 0 };
   try {
     // все кадры страницы (окно комментария бывает во встроенном кадре); не ждём, пока догрузятся
     const run = chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: hasDraft, injectImmediately: true });
     const res = await Promise.race([run, new Promise((r) => setTimeout(() => r(null), 1500))]);
-    if (!res) return "unknown";
-    return res.some((x) => x && x.result) ? "yes" : "no";
+    if (!res) return { draft: "unknown", y: 0 };
+    const top = res.find((x) => x && x.frameId === 0);
+    return { draft: res.some((x) => x && x.result && x.result.draft) ? "yes" : "no", y: (top && top.result && top.result.y) || 0 };
   } catch (e) {
-    return "no"; // на страницу нельзя попасть скриптом (магазин расширений, PDF) — там и черновика нашего не найти
+    return { draft: "no", y: 0 }; // на страницу нельзя попасть скриптом (магазин расширений, PDF) — там и черновика нашего не найти
   }
+}
+
+/** "yes" | "no" | "unknown": не успели проверить — не усыпляем (лучше оставить, чем потерять текст). */
+export async function draftIn(tab) {
+  return (await pageCheck(tab)).draft;
+}
+
+/**
+ * Просто закрыть вкладки — без сохранения в список. Как при сборе: вкладки с недописанным текстом
+ * (или которые не успели проверить) и те, на которые вы тем временем перешли или которые сменили
+ * страницу, остаются открытыми. Возвращает { closed: [{ url, windowId, index, scrollY }], drafts, unknown, moved }
+ * — closed для «Вернуть»: открыть в прежних окнах на прежних местах.
+ */
+export async function closeTabs(tabs, onProgress) {
+  const out = { closed: [], drafts: 0, unknown: 0, moved: 0 };
+  // перешли на вкладку или она сменила страницу (сравниваем с тем, что было в списке)
+  const changed = (t, now) => !now || now.url !== t.url || (now.active && !t.active);
+  const snap = async () => new Map((await chrome.tabs.query({}).catch(() => [])).map((x) => [x.id, x]));
+  // 1) проверяем все, ничего не закрывая: иначе закрытая активная сделает активной соседнюю,
+  //    и та сочтётся «вы на неё перешли»
+  const before = await snap();
+  const ok = new Map(); // id → прокрутка
+  const queue = tabs.slice();
+  let done = 0;
+  const worker = async () => {
+    while (queue.length) {
+      const t = queue.shift();
+      const cur = before.get(t.id);
+      if (cur && changed(t, cur)) out.moved++;
+      else if (cur) {
+        const c = await pageCheck(cur);
+        if (c.draft === "yes") out.drafts++;
+        else if (c.draft === "unknown") out.unknown++;
+        else ok.set(t.id, c.y);
+      }
+      onProgress && onProgress(++done, tabs.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, tabs.length) }, worker));
+  // 2) свежий снимок — ещё до первого закрытия: по нему решаем и запоминаем окна и места для «Вернуть»
+  const now = await snap();
+  const go = [];
+  for (const t of tabs) {
+    if (!ok.has(t.id)) continue;
+    const n = now.get(t.id);
+    if (!n) continue; // уже закрыта
+    if (changed(t, n)) out.moved++;
+    else go.push({ id: t.id, url: n.url, windowId: n.windowId, index: n.index, scrollY: ok.get(t.id) });
+  }
+  // 3) закрываем пачками; не вышло — по одной (какую-то уже закрыли)
+  const gone = new Set();
+  for (let i = 0; i < go.length; i += 50) {
+    const part = go.slice(i, i + 50).map((x) => x.id);
+    try {
+      await chrome.tabs.remove(part);
+      part.forEach((id) => gone.add(id));
+    } catch (e) {
+      for (const id of part) await chrome.tabs.remove(id).then(() => gone.add(id), () => {});
+    }
+  }
+  out.closed = go.filter((x) => gone.has(x.id)).map(({ id, ...rest }) => rest);
+  return out;
 }
 
 /**

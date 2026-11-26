@@ -3,7 +3,7 @@
 
 import { hydrateIcons, icon } from "./icons.js";
 import { isItemKey, load, removeItems, restoreItems, patchItems, addFolder, renameFolder, deleteFolder, saveSettings } from "../core/store.js";
-import { collectTabs, sleepTabs, untouchable, draftIn } from "../core/collect.js";
+import { collectTabs, sleepTabs, closeTabs, untouchable, draftIn } from "../core/collect.js";
 import { findDuplicates } from "../core/dups.js";
 import { plural } from "../core/format.js";
 import { MARKS, MARK_ICON, MARK_NAV, markLabel } from "../core/marks.js";
@@ -218,7 +218,7 @@ function keepFocus(root, paint) {
               : host.classList.contains("nav-marks-btn")
                 ? ".nav-marks-btn"
                 : ".nav-sites-btn");
-  const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-go]") ? "[data-go]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
+  const role = a && (a.matches("input") ? "input" : a.matches("button.chev") ? "button.chev" : a.matches("a[data-open]") ? "a[data-open]" : a.matches("[data-go]") ? "[data-go]" : a.matches("[data-close]") ? "[data-close]" : a.matches("[data-act]") ? `[data-act="${a.dataset.act}"]` : "");
   // место карточки среди соседних: если её уберут из списка, фокус перейдёт на ту, что встала на её место
   const kind = host && (host.dataset.id ? "[data-id]" : host.dataset.tab ? "[data-tab]" : "");
   const pos = kind ? [...root.querySelectorAll(kind)].indexOf(host) : -1;
@@ -284,6 +284,7 @@ function matches(q, ...fields) {
 
 const nTabs = (n) => `${n} ${plural(n, "вкладка", "вкладки", "вкладок")}`;
 const nTabsAcc = (n) => `${n} ${plural(n, "вкладку", "вкладки", "вкладок")}`;
+const short = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const nLinks = (n) => `${n} ${plural(n, "ссылка", "ссылки", "ссылок")}`;
 const nLinksAcc = (n) => `${n} ${plural(n, "ссылку", "ссылки", "ссылок")}`;
 const nSites = (n) => `${n} ${plural(n, "сайте", "сайтах", "сайтах")}`;
@@ -495,7 +496,10 @@ function renderOpen() {
                 <span class="fav">${favImg(t.favIconUrl, t.url)}</span>
                 <span class="r-text"><span class="r-title">${hl(t.title || t.url, st.q)}</span><span class="r-url">${hl(path, st.q)}</span></span>
                 <span class="tags">${tags}</span>
-                <button type="button" class="icon-btn r-go" data-go title="Перейти к этой вкладке (или двойной щелчок)" aria-label="Перейти к вкладке ${esc(t.title || t.url)}">${icon("external", 18)}</button>
+                <span class="r-acts">
+                  <button type="button" class="icon-btn r-go" data-go title="Перейти к этой вкладке (или двойной щелчок)" aria-label="Перейти к вкладке ${esc(t.title || t.url)}">${icon("external", 18)}</button>
+                  ${s ? "" : `<button type="button" class="icon-btn r-close" data-close ${st.collecting ? "disabled" : ""} title="Закрыть вкладку, не сохраняя в список (можно вернуть)" aria-label="Закрыть вкладку ${esc(t.title || t.url)}">${icon("close", 18)}</button>`}
+                </span>
               </label>`;
             })
             .join("")
@@ -539,6 +543,7 @@ function renderOpen() {
   $("dups-btn").disabled = !!st.collecting;
   $("collect-btn").disabled = !sel || !!st.collecting;
   $("sleep-btn").disabled = !sel || !!st.collecting;
+  $("close-btn").disabled = !sel || !!st.collecting;
   fixFocus();
 }
 
@@ -550,6 +555,223 @@ async function goTab(tabId) {
 
 function visibleSelectable() {
   return openGroups().flatMap(([, ts]) => ts.filter(selectable));
+}
+
+/**
+ * Shift+щелчок — как в проводнике и почте: всем строкам от прошлой отмеченной (anchor) до этой —
+ * то же состояние, что у прошлой (отмечали — отмечаются, снимали — снимаются). order — строки по порядку на экране.
+ * Прошлой нет на экране (свернули группу, сменился поиск) — false: тогда просто переключаем одну.
+ */
+function pickRange(sel, order, anchor, id) {
+  const a = order.indexOf(anchor);
+  const b = order.indexOf(id);
+  if (anchor == null || a < 0 || b < 0) return false;
+  const on = sel.has(anchor);
+  for (const x of order.slice(Math.min(a, b), Math.max(a, b) + 1)) on ? sel.add(x) : sel.delete(x);
+  return true;
+}
+
+// ---------------------------------------------------------------- действия над вкладками
+// Одни и те же — из кнопок над списком (выбранные), с кнопки на строке и из меню по правому щелчку.
+
+/** Свежие вкладки по номерам — только те, что ещё можно трогать. */
+function liveTabs(ids) {
+  const want = new Set(ids);
+  return st.tabs.filter((t) => want.has(t.id) && selectable(t));
+}
+
+async function collectNow(tabs) {
+  if (!tabs.length || st.collecting) return;
+  st.collecting = true;
+  renderOpen();
+  let res;
+  try {
+    res = await navigator.locks.request("tc-collect", () => collectTabs(tabs, { onProgress: (d, n) => progress(d / n) }));
+  } catch (e) {
+    toast("Не получилось собрать вкладки — они остались открытыми.");
+    return;
+  } finally {
+    st.collecting = false;
+    progress(null);
+    renderOpen();
+  }
+  for (const t of tabs) st.openSel.delete(t.id);
+  await reloadItems();
+  await reloadTabs();
+  render();
+  const extra = [
+    res.merged ? `${res.merged} уже были в списке` : "",
+    res.kept ? `${res.kept} с недописанным текстом оставлены открытыми` : "",
+    res.unchecked ? `${res.unchecked} не успели проверить — оставлены открытыми` : "",
+    res.moved ? `${res.moved} — вы на них перешли или они сменили страницу, оставлены открытыми` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const closed = res.items; // вкладки с черновиками не закрывались — их и не открываем
+  toast(`Собрано: ${nTabs(tabs.length)}${extra ? ` (${extra})` : ""}`, async () => {
+    // «Вернуть»: открыть закрытые вкладки обратно (усыплёнными, на месте прокрутки) и убрать добавленные записи
+    const back = await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, restore: true, windowId: st.myWindowId }).catch(() => null);
+    // убираем из списка только то, что действительно снова открылось (файл с диска может не открыться)
+    const reopened = new Set((back && back.opened) || []);
+    const added = new Set(res.ids);
+    await removeItems(res.items.filter((it) => added.has(it.id) && reopened.has(it.url)).map((it) => it.id).concat(res.ids.filter((id) => !res.items.some((it) => it.id === id))));
+    await reloadItems();
+    await reloadTabs();
+    render();
+  });
+  runEnrich();
+  if (tabs.length >= 20) chrome.runtime.sendMessage({ type: "backup-soon" }).catch(() => {});
+}
+
+async function sleepNow(tabs) {
+  if (!tabs.length || st.collecting) return;
+  st.collecting = true;
+  renderOpen();
+  let res;
+  try {
+    res = await sleepTabs(tabs, (d, n) => progress(d / n));
+  } catch (e) {
+    res = null;
+  } finally {
+    st.collecting = false;
+    progress(null);
+  }
+  if (!res) {
+    renderOpen();
+    return toast("Не получилось усыпить вкладки");
+  }
+  for (const t of tabs) st.openSel.delete(t.id);
+  await reloadTabs();
+  renderOpen();
+  const why = [
+    res.drafts ? `${res.drafts} — с недописанным текстом` : "",
+    res.audible ? `${res.audible} — со звуком` : "",
+    res.unknown ? `${res.unknown} — не успели проверить` : "",
+    tabs.some((t) => t.active) ? "активные — Chrome их не выгружает" : "",
+  ].filter(Boolean);
+  toast(`Усыплено: ${nTabs(res.n)}${why.length ? `. Не тронуты: ${why.join(", ")}` : ""}`);
+}
+
+/** Просто закрыть — без сохранения в список; «Вернуть» откроет их в прежних окнах на прежних местах. */
+async function closeNow(tabs) {
+  if (!tabs.length || st.collecting) return;
+  st.collecting = true;
+  renderOpen();
+  let res;
+  try {
+    // тот же замок, что у сбора: вкладку не закроют дважды из двух окон сборщика
+    res = await navigator.locks.request("tc-collect", () => closeTabs(tabs, (d, n) => tabs.length > 3 && progress(d / n)));
+  } catch (e) {
+    res = null;
+  } finally {
+    st.collecting = false;
+    progress(null);
+  }
+  if (res) for (const t of tabs) st.openSel.delete(t.id); // не вышло — выбор оставляем
+  await reloadTabs();
+  renderOpen();
+  if (!res) return toast("Не получилось закрыть вкладки");
+  const kept = [
+    res.drafts && `${res.drafts} с недописанным текстом`,
+    res.unknown && `${res.unknown} не удалось проверить`,
+    res.moved && `${res.moved} — вы на них перешли или они сменили страницу`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const closed = res.closed;
+  if (!closed.length) return toast(kept ? `Не закрыто — оставлены открытыми: ${kept}` : "Эти вкладки уже закрыты");
+  const name = closed.length === 1 && tabs.length === 1 ? `«${short(tabs[0].title || tabs[0].url, 60)}»` : "";
+  toast(name ? `Закрыта ${name}` : `Закрыто: ${nTabs(closed.length)}${kept ? ` (оставлены открытыми: ${kept})` : ""}`, async () => {
+    // force: такая же страница может быть открыта в другой вкладке — вернуть нужно именно закрытые,
+    // в их окна и на их места (по порядку, чтобы номера мест не сбивались)
+    const back = closed.slice().sort((a, b) => a.windowId - b.windowId || a.index - b.index);
+    await chrome.runtime.sendMessage({ type: "open", items: back, lazy: true, force: true, restore: true, windowId: st.myWindowId }).catch(() => {});
+  });
+}
+
+/** Отправить вкладки в Telegram (каждую — своей ссылкой, по очереди), итог — подсказкой. */
+async function sendTabsNow(ids, btn) {
+  if (btn) {
+    if (btn.getAttribute("aria-busy") === "true") return;
+    btn.setAttribute("aria-busy", "true"); // сразу: двойной щелчок не отправит дважды
+  }
+  try {
+    const busy = await navigator.locks.query().then((q) => q.held.some((l) => l.name === "tc-send"), () => false);
+    const what = btn ? "текущая вкладка" : ids.length === 1 ? "вкладка" : nTabs(ids.length);
+    toast(busy ? `Идёт другая отправка — ${what} уйдёт сразу после неё…` : `Отправляю ${btn ? "текущую вкладку" : ids.length === 1 ? "вкладку" : nTabsAcc(ids.length)} в Telegram…`);
+    const results = [];
+    for (const tabId of ids) results.push((await chrome.runtime.sendMessage({ type: "send-tab", tabId }).catch(() => null)) || { ok: false, text: "не получилось — попробуйте ещё раз." });
+    if (results.length === 1) {
+      const r = results[0];
+      const name = r.title ? `«${short(r.title, 60)}»` : "Вкладка";
+      return toast(r.ok ? `${name} — в Telegram${r.text ? `, ${r.text}` : ""}` : `Не отправлено: ${r.text}`);
+    }
+    const ok = results.filter((r) => r.ok).length;
+    const bad = results.find((r) => !r.ok);
+    toast(ok === results.length ? `В Telegram: ${nTabsAcc(ok)}` : `В Telegram: ${ok} из ${results.length}. Не отправлено: ${bad.text}`);
+  } finally {
+    if (btn) btn.removeAttribute("aria-busy");
+    await reloadItems(); // отправленные появились в «Собранных» с отметкой «В Telegram»
+    renderLib();
+  }
+}
+
+// ---------------------------------------------------------------- меню по правому щелчку на вкладках
+let tabMenu = null; // { ids, mark } — над какими вкладками действуем и что подсвечено
+
+function showTabMenu(e, ids, { opener, mark, site } = {}) {
+  closeMenu(); // прежнее меню (например, «Отметка») — закрыто как следует, с aria-expanded
+  const menu = $("folder-menu");
+  const tabs = ids.map((id) => st.tabs.find((t) => t.id === id)).filter(Boolean);
+  if (!tabs.length) return;
+  const can = tabs.filter(selectable);
+  const many = tabs.length > 1;
+  const n = (k) => (many ? `<span class="m-count">${k}</span>` : "");
+  const allSel = can.length > 0 && can.every((t) => st.openSel.has(t.id));
+  const web = tabs.filter((t) => /^https?:/i.test(t.url || ""));
+  const sleepy = can.filter((t) => !t.discarded);
+  const b = (act, ic, text, k, cls = "") => `<button type="button" data-tm="${act}"${cls ? ` class="${cls}"` : ""}>${icon(ic, 18)}<span class="m-label">${text}</span>${k == null ? "" : n(k)}</button>`;
+  menu.dataset.kind = "tab";
+  menu.innerHTML = [
+    many ? "" : b("go", "external", "Перейти к вкладке"),
+    web.length ? b("send", "send", "Отправить в Telegram", web.length) : "",
+    can.length ? "<hr />" : "",
+    can.length ? b("collect", "collect", "Собрать и закрыть", can.length) : "",
+    can.length ? b("close", "close", "Закрыть, не сохраняя", can.length, "m-danger") : "",
+    sleepy.length ? b("sleep", "sleep", "Усыпить", sleepy.length) : "",
+    can.length ? "<hr />" : "",
+    can.length ? b("select", allSel ? "minus" : "check", allSel ? (site ? "Снять выбор с вкладок сайта" : "Снять выбор") : site ? "Выбрать все вкладки сайта" : "Выбрать") : "",
+  ]
+    .join("")
+    .replace(/^(<hr \/>)+|(<hr \/>)+$/g, "")
+    .replace(/(<hr \/>){2,}/g, "<hr />");
+  if (!menu.innerHTML.trim()) return;
+  tabMenu = { ids: tabs.map((t) => t.id), mark };
+  document.querySelectorAll(".menu-on").forEach((x) => x.classList.remove("menu-on"));
+  (mark || []).forEach((x) => x.classList.add("menu-on"));
+  // мышью — где щёлкнули; с клавиатуры (Shift+F10, клавиша меню) — под строкой
+  const box = (opener.closest(".row, .g-head") || opener).getBoundingClientRect(); // строка, по которой щёлкнули
+  const inside = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+  placeMenu(opener, inside ? { x: e.clientX, y: e.clientY } : { x: box.left + 16, y: Math.min(box.bottom, box.top + 56) });
+}
+
+async function runTabMenu(act) {
+  const ids = tabMenu ? tabMenu.ids : [];
+  closeMenu(true);
+  const tabs = ids.map((id) => st.tabs.find((t) => t.id === id)).filter(Boolean);
+  if (!tabs.length) return;
+  if (act === "go") return goTab(tabs[0].id);
+  if (act === "send") return sendTabsNow(tabs.filter((t) => /^https?:/i.test(t.url || "")).map((t) => t.id));
+  if (act === "collect") return collectNow(liveTabs(ids));
+  if (act === "close") return closeNow(liveTabs(ids));
+  if (act === "sleep") return sleepNow(liveTabs(ids).filter((t) => !t.discarded));
+  if (act === "select") {
+    const can = liveTabs(ids);
+    const allSel = can.every((t) => st.openSel.has(t.id));
+    for (const t of can) allSel ? st.openSel.delete(t.id) : st.openSel.add(t.id);
+    if (can.length === 1) st.openAnchor = can[0].id;
+    renderOpen();
+  }
 }
 
 function bindOpen() {
@@ -574,8 +796,24 @@ function bindOpen() {
       e.preventDefault();
       return goTab(Number(go.closest(".row").dataset.tab));
     }
+    const cl = e.target.closest("[data-close]");
+    if (cl) {
+      e.preventDefault();
+      return closeNow(liveTabs([Number(cl.closest(".row").dataset.tab)]));
+    }
     const row = e.target.closest(".row");
     if (!row) return;
+    // Ctrl+щелчок — добавить или убрать одну, Shift+щелчок — диапазон от прошлой отмеченной
+    if ((e.shiftKey || e.ctrlKey || e.metaKey) && !row.classList.contains("off")) {
+      e.preventDefault();
+      st.lastRowClick = null;
+      const id = Number(row.dataset.tab);
+      const order = [...$("open-list").querySelectorAll(".row:not(.off)")].map((r) => Number(r.dataset.tab));
+      if (!(e.shiftKey && pickRange(st.openSel, order, st.openAnchor, id))) st.openSel.has(id) ? st.openSel.delete(id) : st.openSel.add(id);
+      st.openAnchor = id;
+      renderOpen();
+      return;
+    }
     // двойной щелчок — перейти к вкладке. Ловим по счётчику щелчков (e.detail): после первого
     // щелчка строка перерисовывается, и обычное событие dblclick до списка не доходит.
     // Переход — только если оба щелчка по одной строке и не по флажку; тройной — ничего.
@@ -593,9 +831,32 @@ function bindOpen() {
       const id = Number(row.dataset.tab);
       // второй щелчок возвращает выбор как было — двойной щелчок выбор не меняет
       st.openSel.has(id) ? st.openSel.delete(id) : st.openSel.add(id);
+      st.openAnchor = id;
       renderOpen();
     }
     if (double) goTab(Number(row.dataset.tab));
+  });
+  // Shift+щелчок не выделяет текст строк
+  $("open-list").addEventListener("mousedown", (e) => {
+    if (e.shiftKey && e.target.closest(".row, .g-head")) e.preventDefault();
+  });
+  // правый щелчок по вкладке — меню её действий; по выбранной (из нескольких) — над всеми выбранными;
+  // по заголовку сайта — над всеми вкладками сайта
+  $("open-list").addEventListener("contextmenu", (e) => {
+    const row = e.target.closest(".row");
+    const head = !row && e.target.closest(".g-head");
+    if (!row && !head) return;
+    e.preventDefault();
+    if (row) {
+      const id = Number(row.dataset.tab);
+      const sel = st.openSel.has(id) && st.openSel.size > 1 ? liveTabs([...st.openSel]).map((t) => t.id) : [id];
+      const mark = sel.length > 1 ? [...$("open-list").querySelectorAll(".row")].filter((r) => sel.includes(Number(r.dataset.tab))) : [row];
+      const opener = row.querySelector("input:not(:disabled), [data-go]");
+      return showTabMenu(e, sel, { opener, mark });
+    }
+    const site = head.parentElement.dataset.site;
+    const tabs = (openGroups().find(([s]) => s === site) || [, []])[1];
+    showTabMenu(e, tabs.map((t) => t.id), { opener: head.querySelector(".g-chk input:not(:disabled), .chev"), mark: [head], site });
   });
   $("open-all").addEventListener("change", (e) => {
     const tabs = visibleSelectable();
@@ -612,49 +873,8 @@ function bindOpen() {
     })
   );
 
-  $("collect-btn").addEventListener("click", async () => {
-    const tabs = st.tabs.filter((t) => st.openSel.has(t.id) && selectable(t));
-    if (!tabs.length || st.collecting) return;
-    st.collecting = true;
-    renderOpen();
-    let res;
-    try {
-      res = await navigator.locks.request("tc-collect", () => collectTabs(tabs, { onProgress: (d, n) => progress(d / n) }));
-    } catch (e) {
-      toast("Не получилось собрать вкладки — они остались открытыми.");
-      return;
-    } finally {
-      st.collecting = false;
-      progress(null);
-      renderOpen();
-    }
-    st.openSel.clear();
-    await reloadItems();
-    await reloadTabs();
-    render();
-    const extra = [
-      res.merged ? `${res.merged} уже были в списке` : "",
-      res.kept ? `${res.kept} с недописанным текстом оставлены открытыми` : "",
-      res.unchecked ? `${res.unchecked} не успели проверить — оставлены открытыми` : "",
-      res.moved ? `${res.moved} — вы на них перешли или они сменили страницу, оставлены открытыми` : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    const closed = res.items; // вкладки с черновиками не закрывались — их и не открываем
-    toast(`Собрано: ${nTabs(tabs.length)}${extra ? ` (${extra})` : ""}`, async () => {
-      // «Вернуть»: открыть закрытые вкладки обратно (усыплёнными, на месте прокрутки) и убрать добавленные записи
-      const back = await chrome.runtime.sendMessage({ type: "open", items: closed.map((it) => ({ url: it.url, scrollY: it.scrollY || 0 })), lazy: true, restore: true, windowId: st.myWindowId }).catch(() => null);
-      // убираем из списка только то, что действительно снова открылось (файл с диска может не открыться)
-      const reopened = new Set((back && back.opened) || []);
-      const added = new Set(res.ids);
-      await removeItems(res.items.filter((it) => added.has(it.id) && reopened.has(it.url)).map((it) => it.id).concat(res.ids.filter((id) => !res.items.some((it) => it.id === id))));
-      await reloadItems();
-      await reloadTabs();
-      render();
-    });
-    runEnrich();
-    if (tabs.length >= 20) chrome.runtime.sendMessage({ type: "backup-soon" }).catch(() => {});
-  });
+  $("collect-btn").addEventListener("click", () => collectNow(liveTabs([...st.openSel])));
+  $("close-btn").addEventListener("click", () => closeNow(liveTabs([...st.openSel])));
 
   $("dups-btn").addEventListener("click", async () => {
     const list = (st.dups || []).slice();
@@ -720,34 +940,7 @@ function bindOpen() {
     } : undefined);
   });
 
-  $("sleep-btn").addEventListener("click", async () => {
-    const tabs = st.tabs.filter((t) => st.openSel.has(t.id) && selectable(t));
-    if (!tabs.length || st.collecting) return;
-    st.collecting = true;
-    renderOpen();
-    let res;
-    try {
-      res = await sleepTabs(tabs, (d, n) => progress(d / n));
-    } catch (e) {
-      res = null;
-    } finally {
-      st.collecting = false;
-      progress(null);
-    }
-    if (!res) {
-      renderOpen();
-      return toast("Не получилось усыпить вкладки");
-    }
-    st.openSel.clear();
-    await reloadTabs();
-    renderOpen();
-    const why = [
-      res.drafts ? `${res.drafts} — с недописанным текстом` : "",
-      res.audible ? `${res.audible} — со звуком` : "",
-      res.unknown ? `${res.unknown} — не успели проверить` : "",
-    ].filter(Boolean);
-    toast(`Усыплено: ${nTabs(res.n)}${why.length ? `. Не тронуты: ${why.join(", ")}` : ""}`);
-  });
+  $("sleep-btn").addEventListener("click", () => sleepNow(liveTabs([...st.openSel])));
 }
 
 // ---------------------------------------------------------------- «Собранные»
@@ -992,25 +1185,29 @@ function closeMenu(refocus = false) {
   const menu = $("folder-menu");
   if (menu.hidden) return;
   menu.hidden = true;
+  document.querySelectorAll(".menu-on").forEach((x) => x.classList.remove("menu-on"));
   if (menuOpener) {
-    menuOpener.setAttribute("aria-expanded", "false");
-    if (refocus && menuOpener.isConnected) menuOpener.focus();
+    if (menuOpener.hasAttribute("aria-expanded")) menuOpener.setAttribute("aria-expanded", "false");
+    if (refocus && menuOpener.isConnected) menuOpener.focus({ preventScroll: true });
   }
 }
 
 let menuOpener = null;
-function placeMenu(anchor) {
+// at — точка правого щелчка: меню там, а не под кнопкой
+function placeMenu(anchor, at) {
   const menu = $("folder-menu");
   menu.hidden = false;
   menuOpener = anchor;
-  anchor.setAttribute("aria-expanded", "true");
+  if (!at) anchor.setAttribute("aria-expanded", "true");
+  if (!at) document.querySelectorAll(".menu-on").forEach((x) => x.classList.remove("menu-on"));
   menu.querySelectorAll("button").forEach((b) => b.setAttribute("role", b.hasAttribute("aria-checked") ? "menuitemradio" : "menuitem"));
-  const r = anchor.getBoundingClientRect();
+  const r = at ? { left: at.x, top: at.y, bottom: at.y } : anchor.getBoundingClientRect();
+  const gap = at ? 2 : 6;
   const w = menu.offsetWidth;
   menu.style.left = `${Math.max(16, Math.min(r.left, innerWidth - w - 16))}px`;
-  const below = r.bottom + 6;
-  menu.style.top = below + menu.offsetHeight > innerHeight - 16 ? `${Math.max(16, r.top - menu.offsetHeight - 6)}px` : `${below}px`;
-  menu.querySelector("button").focus();
+  const below = r.bottom + gap;
+  menu.style.top = below + menu.offsetHeight > innerHeight - 16 ? `${Math.max(16, r.top - menu.offsetHeight - gap)}px` : `${below}px`;
+  menu.querySelector("button").focus({ preventScroll: true });
 }
 
 let markTarget = [];
@@ -1162,9 +1359,15 @@ function bindLib() {
     }
     if (e.target.closest(".chk") || e.target === c || e.target.closest(".c-body") && !e.target.closest("a")) {
       if (e.target.closest(".chk")) e.preventDefault();
-      st.libSel.has(id) ? st.libSel.delete(id) : st.libSel.add(id);
+      // Shift+щелчок — диапазон от прошлой отмеченной, как в «Открытых»
+      const order = [...$("lib-list").querySelectorAll(".card")].map((x) => x.dataset.id);
+      if (!(e.shiftKey && pickRange(st.libSel, order, st.libAnchor, id))) st.libSel.has(id) ? st.libSel.delete(id) : st.libSel.add(id);
+      st.libAnchor = id;
       renderLib();
     }
+  });
+  $("lib-list").addEventListener("mousedown", (e) => {
+    if (e.shiftKey && e.target.closest(".card") && !e.target.closest("a, input")) e.preventDefault(); // без выделения текста
   });
   $("lib-all").addEventListener("change", (e) => {
     const vis = libVisible();
@@ -1220,6 +1423,8 @@ function bindLib() {
     }
   });
   $("folder-menu").addEventListener("click", async (e) => {
+    const tm = e.target.closest("[data-tm]");
+    if (tm) return runTabMenu(tm.dataset.tm);
     const fp = e.target.closest("[data-folder-pick]");
     if (fp) {
       closeMenu(true);
@@ -1293,6 +1498,18 @@ function bindLib() {
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#folder-menu")) closeMenu();
   });
+  // правый щелчок мимо вкладок, прокрутка списка, смена размера окна — меню вкладки закрывается
+  document.addEventListener("contextmenu", (e) => {
+    if (!e.defaultPrevented && !e.target.closest("#folder-menu")) closeMenu();
+  });
+  addEventListener("resize", () => closeMenu());
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      if ($("folder-menu").dataset.kind === "tab" && !(e.target.closest && e.target.closest("#folder-menu"))) closeMenu();
+    },
+    true
+  );
   $("send-btn").addEventListener("click", () =>
     openSend(selectedItems(), async (sentIds) => {
       for (const id of sentIds || []) st.libSel.delete(id); // повторная «В Telegram» — только недошедшие
@@ -1434,6 +1651,15 @@ async function init() {
     if (e.key === "/" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName) && !document.querySelector("dialog[open]")) {
       e.preventDefault();
       q.focus();
+    } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyA") {
+      // Ctrl+A вне полей ввода — «Выбрать все» в текущем разделе
+      const a = document.activeElement;
+      if (a.matches('textarea, select, input:not([type="checkbox"]):not([type="radio"]):not([type="button"])') || a.isContentEditable || document.querySelector("dialog[open]")) return;
+      const all = $(st.view === "library" ? "lib-all" : "open-all");
+      e.preventDefault();
+      if (all.disabled || all.checked) return;
+      all.checked = true;
+      all.dispatchEvent(new Event("change"));
     } else if (e.key === "Escape") {
       closeMenu();
       if (document.activeElement === q && q.value) {
@@ -1448,16 +1674,9 @@ async function init() {
     if (b.getAttribute("aria-busy") === "true") return;
     b.setAttribute("aria-busy", "true"); // сразу: двойной щелчок не отправит дважды
     const tabId = PANEL ? ((await chrome.tabs.query({ active: true, windowId: st.myWindowId }).catch(() => []))[0] || {}).id : st.fromTab;
-    if (tabId == null) {
-      b.removeAttribute("aria-busy");
-      return toast("Нет текущей вкладки: откройте сборщик с той страницы, которую хотите отправить");
-    }
-    const busy = await navigator.locks.query().then((q) => q.held.some((l) => l.name === "tc-send"), () => false);
-    toast(busy ? "Идёт другая отправка — текущая вкладка уйдёт сразу после неё…" : "Отправляю текущую вкладку в Telegram…");
-    const r = (await chrome.runtime.sendMessage({ type: "send-tab", tabId }).catch(() => null)) || { ok: false, text: "не получилось — попробуйте ещё раз." };
     b.removeAttribute("aria-busy");
-    const name = r.title ? `«${r.title.length > 60 ? `${r.title.slice(0, 59)}…` : r.title}»` : "Вкладка";
-    toast(r.ok ? `${name} — в Telegram${r.text ? `, ${r.text}` : ""}` : `Не отправлено: ${r.text}`);
+    if (tabId == null) return toast("Нет текущей вкладки: откройте сборщик с той страницы, которую хотите отправить");
+    await sendTabsNow([tabId], b);
   });
   // панель ↔ вкладка
   $("to-tab").addEventListener("click", async () => {
