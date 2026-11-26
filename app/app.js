@@ -1446,10 +1446,14 @@ async function init() {
   $("send-now").addEventListener("click", async () => {
     const b = $("send-now");
     if (b.getAttribute("aria-busy") === "true") return;
+    b.setAttribute("aria-busy", "true"); // сразу: двойной щелчок не отправит дважды
     const tabId = PANEL ? ((await chrome.tabs.query({ active: true, windowId: st.myWindowId }).catch(() => []))[0] || {}).id : st.fromTab;
-    if (tabId == null) return toast("Нет текущей вкладки: откройте сборщик с той страницы, которую хотите отправить");
-    b.setAttribute("aria-busy", "true");
-    toast("Отправляю текущую вкладку в Telegram…");
+    if (tabId == null) {
+      b.removeAttribute("aria-busy");
+      return toast("Нет текущей вкладки: откройте сборщик с той страницы, которую хотите отправить");
+    }
+    const busy = await navigator.locks.query().then((q) => q.held.some((l) => l.name === "tc-send"), () => false);
+    toast(busy ? "Идёт другая отправка — текущая вкладка уйдёт сразу после неё…" : "Отправляю текущую вкладку в Telegram…");
     const r = (await chrome.runtime.sendMessage({ type: "send-tab", tabId }).catch(() => null)) || { ok: false, text: "не получилось — попробуйте ещё раз." };
     b.removeAttribute("aria-busy");
     const name = r.title ? `«${r.title.length > 60 ? `${r.title.slice(0, 59)}…` : r.title}»` : "Вкладка";

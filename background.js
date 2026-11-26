@@ -79,10 +79,19 @@ chrome.runtime.onStartup.addListener(() => pruneShots().catch(() => {}));
 chrome.runtime.onInstalled.addListener(() => migrateKeys().catch(() => {}));
 chrome.runtime.onStartup.addListener(() => migrateKeys().catch(() => {}));
 
+// у каждой вкладки — номер последнего значка: прежний таймер не стирает новый (например, «…» следующей отправки)
+const badgeSeq = new Map();
 async function badge(text, tabId, ms = 4000, color = "#6d5efc") {
+  const seq = (badgeSeq.get(tabId) || 0) + 1;
+  badgeSeq.set(tabId, seq);
   await chrome.action.setBadgeBackgroundColor({ color, tabId }).catch(() => {});
   await chrome.action.setBadgeText({ text, tabId }).catch(() => {});
-  if (ms) setTimeout(() => chrome.action.setBadgeText({ text: "", tabId }).catch(() => {}), ms);
+  if (ms)
+    setTimeout(() => {
+      if (badgeSeq.get(tabId) !== seq) return;
+      badgeSeq.delete(tabId);
+      chrome.action.setBadgeText({ text: "", tabId }).catch(() => {});
+    }, ms);
 }
 
 // ---------- Отправить вкладку (страницу, ссылку) в Telegram сразу, без страницы сборщика ----------
@@ -92,6 +101,25 @@ function sendNote(text) {
   chrome.notifications
     .create({ type: "basic", iconUrl: "icons/icon128.png", title: "Сборщик вкладок", message: text, priority: 0 })
     .catch(() => {});
+}
+
+// открыт ли сборщик (вкладка или боковая панель) — тогда итог покажет он сам
+async function appOpen() {
+  try {
+    const all = await chrome.runtime.getContexts({ contextTypes: ["TAB", "SIDE_PANEL"] });
+    return all.some((c) => (c.documentUrl || "").startsWith(APP));
+  } catch (e) {
+    return false;
+  }
+}
+
+// идёт ли сейчас другая отправка (из окна сборщика или предыдущая быстрая)
+async function sendBusy() {
+  try {
+    return (await navigator.locks.query()).held.some((l) => l.name === "tc-send");
+  } catch (e) {
+    return false;
+  }
 }
 
 // notify: false — когда спрашивает сборщик (он сам покажет итог); возвращает { ok, text, title }
@@ -117,26 +145,47 @@ async function sendToBot(tab, linkUrl, { notify = true } = {}) {
     const now = Date.now();
     const item = makeItem(src, g, now, now);
     await addItems([item]); // уже есть в списке — останется прежняя запись
-    const it = (await load()).items.find((x) => x.nkey === item.nkey) || item;
-    title = it.title || title;
-    // по очереди с отправкой из сборщика — тот же замок
-    const res = await navigator.locks.request("tc-send", () =>
-      sendLinks([it], "each", {
+    const first = (await load()).items.find((x) => x.nkey === item.nkey) || item;
+    title = first.title || title;
+    // по очереди с отправкой из сборщика — тот же замок; занят — говорим, что ждём
+    if (await sendBusy()) say("Идёт другая отправка — эта ссылка уйдёт сразу после неё.");
+    const res = await navigator.locks.request("tc-send", async () => {
+      await badge("…", tab.id, 0); // значок прежней отправки мог её «…» сменить
+      // пока ждали очереди, запись могли отправить (из окна сборщика) или удалить — берём свежую
+      let it = (await load()).items.find((x) => x.nkey === item.nkey);
+      if (!it) {
+        await addItems([item]);
+        it = item;
+      }
+      if ((it.sentAt || null) !== (first.sentAt || null)) return { sentMeanwhile: true };
+      const out = await sendLinks([it], "each", {
         onBatch: async (batch) => {
           const done = [...batch].filter(([, r]) => r.status === "saved" || r.status === "exists");
           const cat = new Map(done.map(([id, r]) => [id, r.category || ""]));
           if (done.length) await patchItems([...cat.keys()], (x) => ({ sentAt: Date.now(), sentCategory: cat.get(x.id) }));
         },
-      })
-    );
-    const r = res.results.get(it.id);
-    ok = !!r && (r.status === "saved" || r.status === "exists");
-    if (ok) text = r.status === "exists" ? "уже была в архиве бота" : r.category ? `в папке «${r.category}»` : "";
-    else text = res.error || (r && r.error) || "бот не принял ссылку.";
+      });
+      out.id = it.id;
+      return out;
+    });
+    if (res.sentMeanwhile) {
+      ok = true;
+      text = "уже отправлена из сборщика";
+    } else {
+      const r = res.results.get(res.id);
+      ok = !!r && (r.status === "saved" || r.status === "exists");
+      if (ok) text = r.status === "exists" ? "уже была в архиве бота" : r.category ? `в папке «${r.category}»` : "";
+      else if (!r && res.skipped) text = "адрес слишком длинный или с ошибкой — его не отправляли.";
+      else text = res.error || (r && r.error) || "бот не принял ссылку.";
+    }
   } catch (e) {
     text = "не получилось — попробуйте ещё раз.";
   }
-  if (!ok) say(`Не отправлено: ${text}`);
+  const short = title.length > 80 ? `${title.slice(0, 79)}…` : title;
+  // из меню или с клавиатуры итог видно и без значка на панели (его могли спрятать в меню расширений)
+  if (ok) say(`В Telegram: «${short}»${text ? ` — ${text}` : ""}`);
+  // сборщик закрыли посреди отправки — ошибку покажем уведомлением, а не потеряем
+  else if (notify || !(await appOpen())) sendNote(`Не отправлено: ${text}`);
   await badge(ok ? "✓" : "!", tab.id, 4000, ok ? "#2e9d5b" : "#d14343");
   return { ok, text, title };
 }

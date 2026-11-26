@@ -173,7 +173,7 @@ async function go() {
   }
   if (!res.busy) keepTitle = m === "list" && (res.error || res.stopped) && items.length ? { k: selKey(items), v: listTitle } : { k: "", v: "" };
   if (res.busy) {
-    status("Отправка уже идёт в другом окне сборщика — дождитесь её конца.", "err");
+    status("Уже идёт другая отправка — дождитесь её конца.", "err");
     return;
   }
   if (res.allSentElsewhere) {

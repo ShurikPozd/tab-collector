@@ -320,6 +320,11 @@ svg {
   color: var(--accent-ink);
 }
 
+/* самолётик «тяжелее» справа сверху (остриё и длинный край) — на глаз по центру он, если чуть сместить влево-вниз */
+.icon-btn.send-now svg {
+  transform: translate(-6%, 6%);
+}
+
 .icon-btn.send-now:hover {
   background: var(--accent);
   color: #fff;
